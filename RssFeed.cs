@@ -13,7 +13,7 @@ namespace TvShowRss
         <title>{title}</title>
         <description>TV shows episodes RSS feed</description>
         <link>{link}</link>
-        <ttl>15</ttl>
+        <ttl>240</ttl>
         {items}
     </channel>
 </rss>
