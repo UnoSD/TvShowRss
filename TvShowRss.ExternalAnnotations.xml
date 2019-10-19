@@ -1,0 +1,8 @@
+<assembly name="TvShowRss">
+    <member name="M:TvShowRss.GetFeed.Run()">
+        <attribute ctor="M:JetBrains.Annotations.UsedImplicitlyAttribute.#ctor" />
+        <parameter name="_">
+            <attribute ctor="M:JetBrains.Annotations.UsedImplicitlyAttribute.#ctor" />
+        </parameter>
+    </member>
+</assembly>
