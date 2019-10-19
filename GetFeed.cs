@@ -10,7 +10,7 @@ namespace TvShowRss
 {
     public static class GetFeed
     {
-        static readonly DateTime FromDate = DateTime.Now.AddDays(-(7*30));
+        static readonly DateTime FromDate = DateTime.Now.AddDays(-5);
 
         [FunctionName("GetFeed")]
         public static Task<IActionResult> Run
