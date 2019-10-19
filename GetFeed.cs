@@ -16,7 +16,7 @@ namespace TvShowRss
         public static Task<IActionResult> Run
         (
             [HttpTrigger(AuthorizationLevel.Function, "get")]
-            HttpRequest _
+            HttpRequest req
         ) => Finder.FindLatestEpisodeByDateAsync(FromDate, Config.GetValue(TableConnectionString))
                    .Map(episodes => episodes.ToRssFeed())
                    .Map(feed => feed.ToRssOkResult());
