@@ -9,14 +9,12 @@ using TraktApiSharp.Objects.Get.Shows;
 using TraktApiSharp.Objects.Get.Shows.Seasons;
 using TraktApiSharp.Requests.Params;
 using static TvShowRss.ConfigurationProvider;
+using static TvShowRss.ConfigKeys;
 
 namespace TvShowRss
 {
     static class TraktClientFactory
     {
-        const string ConfigurationKeyClientId = "TraktClientId";
-        const string ConfigurationKeyClientSecret = "TraktClientSecret";
-
         static readonly TraktExtendedInfo Info = new TraktExtendedInfo
         {
             Episodes = true,
@@ -28,8 +26,8 @@ namespace TvShowRss
 
         static readonly Lazy<TraktClient> Client =
             new Lazy<TraktClient>(() => 
-                new TraktClient(Configuration.Value[ConfigurationKeyClientId], 
-                                Configuration.Value[ConfigurationKeyClientSecret]));
+                new TraktClient(Configuration.Value[TraktClientId], 
+                                Configuration.Value[TraktClientSecret]));
 
         internal static TraktClient TraktClient => Client.Value;
 
