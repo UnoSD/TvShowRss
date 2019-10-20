@@ -26,8 +26,8 @@ namespace TvShowRss
 
         static readonly Lazy<TraktClient> Client =
             new Lazy<TraktClient>(() => 
-                new TraktClient(Configuration.Value[TraktClientId], 
-                                Configuration.Value[TraktClientSecret]));
+                new TraktClient(Config.GetValue(TraktClientId), 
+                                Config.GetValue(TraktClientSecret)));
 
         internal static TraktClient TraktClient => Client.Value;
 
