@@ -35,17 +35,19 @@ resource "azurerm_key_vault" "tv_show_rss" {
   tenant_id                   = data.azurerm_subscription.current.tenant_id
 
   sku_name = "standard"
+}
 
-  access_policy {
-    tenant_id = data.azurerm_subscription.current.tenant_id # azurerm_function_app.tv_show_rss.identity[0].tenant_id
-    object_id = azurerm_function_app.tv_show_rss.identity[0].principal_id // Function App MI
+resource "azurerm_key_vault_access_policy" "tv_show_rss" {
+  key_vault_id = azurerm_key_vault.tv_show_rss.id
 
-    secret_permissions = [
-      "get",
-      "set",
-      "list"
-    ]
-  }
+  tenant_id = data.azurerm_subscription.current.tenant_id # azurerm_function_app.tv_show_rss.identity[0].tenant_id
+  object_id = azurerm_function_app.tv_show_rss.identity[0].principal_id // Function App MI
+
+  secret_permissions = [
+    "get",
+    "set",
+    "list"
+  ]
 }
 
 resource "azurerm_key_vault_secret" "storage_connection_string" {
@@ -153,6 +155,9 @@ resource "azurerm_function_app" "tv_show_rss" {
     WEBSITE_CONTENTAZUREFILECONNECTIONSTRING = azurerm_storage_account.tv_show_rss.primary_connection_string
     WEBSITE_CONTENTSHARE                     = "tvshowrss"
     WEBSITE_USE_ZIP                          = "https://${azurerm_storage_account.tv_show_rss.name}.blob.core.windows.net/${azurerm_storage_container.deployments_container.name}/${azurerm_storage_blob.tv_show_rss.name}${data.azurerm_storage_account_sas.tv_show_rss.sas}"
+    TableConnectionString                    = azurerm_storage_account.tv_show_rss.primary_connection_string
+    TraktClientId                            = "@Microsoft.KeyVault(VaultName=${azurerm_key_vault.tv_show_rss.name};SecretName=${azurerm_key_vault_secret.trakt_client_id.name};SecretVersion=${azurerm_key_vault_secret.trakt_client_id.version})"
+    TraktClientSecret                        = "@Microsoft.KeyVault(VaultName=${azurerm_key_vault.tv_show_rss.name};SecretName=${azurerm_key_vault_secret.trakt_client_secret.name};SecretVersion=${azurerm_key_vault_secret.trakt_client_secret.version})"
   }
   site_config {
     use_32_bit_worker_process = false
