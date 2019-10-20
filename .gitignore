@@ -333,3 +333,7 @@ ASALocalRun/
 terraform.tfvars
 terraform.tfstate*
 .terraform/
+.terarform*
+
+# Publish
+files/
