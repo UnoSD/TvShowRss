@@ -37,8 +37,8 @@ resource "azurerm_key_vault" "tv_show_rss" {
   sku_name = "standard"
 
   access_policy {
-    tenant_id = data.azurerm_subscription.current.tenant_id # azurerm_function_app.tv_show_rss.identity.tenant_id
-    object_id = azurerm_function_app.tv_show_rss.identity.principal_id // Function App MI
+    tenant_id = data.azurerm_subscription.current.tenant_id # azurerm_function_app.tv_show_rss.identity[0].tenant_id
+    object_id = azurerm_function_app.tv_show_rss.identity[0].principal_id // Function App MI
 
     secret_permissions = [
       "get",
@@ -143,6 +143,7 @@ resource "azurerm_function_app" "tv_show_rss" {
   storage_connection_string = azurerm_storage_account.tv_show_rss.primary_connection_string
   https_only                = true
   enable_builtin_logging    = false
+  version                   = "~2"
   app_settings = {
     FUNCTIONS_WORKER_RUNTIME                 = "dotnet"
     FUNCTIONS_EXTENSION_VERSION              = "~2"
