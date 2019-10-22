@@ -12,6 +12,7 @@ variable "trakt_client_secret" {
 
 locals {
   resource_group_name = "TvShowRss"
+  resources_prefix    = lower(local.resource_group_name)
 }
 
 resource "azurerm_resource_group" "tv_show_rss" {
@@ -20,7 +21,7 @@ resource "azurerm_resource_group" "tv_show_rss" {
 }
 
 resource "azurerm_storage_account" "tv_show_rss" {
-  name                     = "tvshowrsssa"
+  name                     = "${local.resources_prefix}sa"
   resource_group_name      = azurerm_resource_group.tv_show_rss.name
   location                 = azurerm_resource_group.tv_show_rss.location
   account_tier             = "Standard"
@@ -29,7 +30,7 @@ resource "azurerm_storage_account" "tv_show_rss" {
 }
 
 resource "azurerm_key_vault" "tv_show_rss" {
-  name                        = "tvshowrsskv"
+  name                        = "${local.resources_prefix}kv"
   location                    = azurerm_resource_group.tv_show_rss.location
   resource_group_name         = azurerm_resource_group.tv_show_rss.name
   tenant_id                   = data.azurerm_subscription.current.tenant_id
@@ -80,7 +81,7 @@ resource "azurerm_storage_container" "deployments_container" {
 }
 
 resource "azurerm_application_insights" "tv_show_rss" {
-  name                = "tvshowrssai"
+  name                = "${local.resources_prefix}ai"
   location            = azurerm_resource_group.tv_show_rss.location
   resource_group_name = azurerm_resource_group.tv_show_rss.name
   application_type    = "web"
@@ -139,7 +140,7 @@ data "azurerm_storage_account_sas" "tv_show_rss" {
 
 resource "azurerm_app_service_plan" "tv_show_rss" {
   location            = azurerm_resource_group.tv_show_rss.location
-  name                = "WestEuropeLinuxDynamicPlan" # "tvshowrssasp"
+  name                = "WestEuropeLinuxDynamicPlan" # "${local.resources_prefix}asp"
   resource_group_name = azurerm_resource_group.tv_show_rss.name
   reserved            = true
   kind                = "functionapp"
@@ -153,7 +154,7 @@ resource "azurerm_app_service_plan" "tv_show_rss" {
 }
 
 resource "azurerm_function_app" "tv_show_rss" {
-  name                      = "tvshowrssfa"
+  name                      = "${local.resources_prefix}fa"
   location                  = azurerm_resource_group.tv_show_rss.location
   resource_group_name       = azurerm_resource_group.tv_show_rss.name
   app_service_plan_id       = azurerm_app_service_plan.tv_show_rss.id #"/subscriptions/${data.azurerm_subscription.current.subscription_id}/resourceGroups/${azurerm_resource_group.tv_show_rss.name}/providers/Microsoft.Web/serverfarms/WestEuropeLinuxDynamicPlan"
@@ -168,7 +169,7 @@ resource "azurerm_function_app" "tv_show_rss" {
     APPINSIGHTS_INSTRUMENTATIONKEY           = azurerm_application_insights.tv_show_rss.instrumentation_key
     AzureWebJobsStorage                      = azurerm_storage_account.tv_show_rss.primary_connection_string
     WEBSITE_CONTENTAZUREFILECONNECTIONSTRING = azurerm_storage_account.tv_show_rss.primary_connection_string
-    WEBSITE_CONTENTSHARE                     = "tvshowrss"
+    WEBSITE_CONTENTSHARE                     = local.resources_prefix
     WEBSITE_USE_ZIP                          = "https://${azurerm_storage_account.tv_show_rss.name}.blob.core.windows.net/${azurerm_storage_container.deployments_container.name}/${azurerm_storage_blob.tv_show_rss.name}${data.azurerm_storage_account_sas.tv_show_rss.sas}"
     TableConnectionString                    = azurerm_storage_account.tv_show_rss.primary_connection_string
     # Key Vault references are not yet available on Linux consumption plans
