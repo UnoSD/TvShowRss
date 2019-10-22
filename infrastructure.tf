@@ -12,13 +12,20 @@ variable "trakt_client_secret" {
 }
 
 locals {
-  resource_group_name = "TvShowRss"
-  resources_prefix    = lower(local.resource_group_name)
+  resource_group_name             = "TvShowRss"
+  location                        = "West Europe"
+  resources_prefix                = lower(local.resource_group_name)
+  table_cs_secret_name            = "TableConnectionString"
+  trakt_client_id_secret_name     = "TraktClientId"
+  trakt_client_secret_secret_name = "TraktClientSecret"
+  table_name                      = "series"
+  sas_expiration_start_date       = "2019-10-21" #timestamp()
+  sas_expiration_end_date         = "2019-11-21" #timeadd(timestamp(), "10m")
 }
 
 resource "azurerm_resource_group" "tv_show_rss" {
   name     = local.resource_group_name
-  location = "West Europe"
+  location = local.location
 }
 
 resource "azurerm_storage_account" "tv_show_rss" {
@@ -53,8 +60,8 @@ resource "azurerm_key_vault" "tv_show_rss" {
 resource "azurerm_key_vault_access_policy" "tv_show_rss" {
   key_vault_id = azurerm_key_vault.tv_show_rss.id
 
-  tenant_id = data.azurerm_subscription.current.tenant_id # azurerm_function_app.tv_show_rss.identity[0].tenant_id
-  object_id = azurerm_function_app.tv_show_rss.identity[0].principal_id // Function App MI
+  tenant_id = azurerm_function_app.tv_show_rss.identity[0].tenant_id
+  object_id = azurerm_function_app.tv_show_rss.identity[0].principal_id
 
   secret_permissions = [
     "get",
@@ -64,25 +71,25 @@ resource "azurerm_key_vault_access_policy" "tv_show_rss" {
 }
 
 resource "azurerm_key_vault_secret" "storage_connection_string" {
-  name         = "TableConnectionString"
+  name         = local.table_cs_secret_name
   value        = azurerm_storage_account.tv_show_rss.primary_connection_string
   key_vault_id = azurerm_key_vault.tv_show_rss.id
 }
 
 resource "azurerm_key_vault_secret" "trakt_client_id" {
-  name         = "TraktClientId"
+  name         = local.trakt_client_id_secret_name
   value        = var.trakt_client_id
   key_vault_id = azurerm_key_vault.tv_show_rss.id
 }
 
 resource "azurerm_key_vault_secret" "trakt_client_secret" {
-  name         = "TraktClientSecret"
+  name         = local.trakt_client_secret_secret_name
   value        = var.trakt_client_secret
   key_vault_id = azurerm_key_vault.tv_show_rss.id
 }
 
 resource "azurerm_storage_table" "series" {
-  name                 = "series"
+  name                 = local.table_name
   storage_account_name = azurerm_storage_account.tv_show_rss.name
 }
 
@@ -101,11 +108,9 @@ resource "azurerm_application_insights" "tv_show_rss" {
 
 data "archive_file" "tv_show_rss" {
   type = "zip"
-  # Publish linux 64 bit? dotnet publish -r linux-x64 -o bin/publish
-  # Used results of running `func azure functionapp publish test123xx`
+  # dotnet publish -r linux-x64 -o bin/publish
   source_dir = "${path.module}/bin/publish"
-  // Should be hash of itself, not timestamp
-  output_path = "${path.module}/bin/function_app.zip" #"${path.module}/bin/function_app.${formatdate("DDMMYYhhmmss", timestamp())}.zip"
+  output_path = "${path.module}/bin/function_app.zip"
 }
 
 resource "azurerm_storage_blob" "tv_show_rss" {
@@ -135,8 +140,8 @@ data "azurerm_storage_account_sas" "tv_show_rss" {
     file  = false
   }
 
-  start  = "2019-10-21" #timestamp()
-  expiry = "2019-11-21" #timeadd(timestamp(), "10m")
+  start  = local.sas_expiration_start_date
+  expiry = local.sas_expiration_end_date
 
   permissions {
     read    = true
@@ -150,6 +155,9 @@ data "azurerm_storage_account_sas" "tv_show_rss" {
   }
 }
 
+# This is normally auto-generated, remove when Terraform supports
+# Dynamic Linux plan
+# Import "/subscriptions/${data.azurerm_subscription.current.subscription_id}/resourceGroups/${azurerm_resource_group.tv_show_rss.name}/providers/Microsoft.Web/serverfarms/WestEuropeLinuxDynamicPlan"
 resource "azurerm_app_service_plan" "tv_show_rss" {
   location            = azurerm_resource_group.tv_show_rss.location
   name                = "WestEuropeLinuxDynamicPlan" # "${local.resources_prefix}asp"
@@ -169,7 +177,7 @@ resource "azurerm_function_app" "tv_show_rss" {
   name                      = "${local.resources_prefix}fa"
   location                  = azurerm_resource_group.tv_show_rss.location
   resource_group_name       = azurerm_resource_group.tv_show_rss.name
-  app_service_plan_id       = azurerm_app_service_plan.tv_show_rss.id #"/subscriptions/${data.azurerm_subscription.current.subscription_id}/resourceGroups/${azurerm_resource_group.tv_show_rss.name}/providers/Microsoft.Web/serverfarms/WestEuropeLinuxDynamicPlan"
+  app_service_plan_id       = azurerm_app_service_plan.tv_show_rss.id
   storage_connection_string = azurerm_storage_account.tv_show_rss.primary_connection_string
   https_only                = true
   enable_builtin_logging    = false
@@ -184,11 +192,11 @@ resource "azurerm_function_app" "tv_show_rss" {
     WEBSITE_CONTENTSHARE                     = local.resources_prefix
     WEBSITE_USE_ZIP                          = "https://${azurerm_storage_account.tv_show_rss.name}.blob.core.windows.net/${azurerm_storage_container.deployments_container.name}/${azurerm_storage_blob.tv_show_rss.name}${data.azurerm_storage_account_sas.tv_show_rss.sas}"
     TableConnectionString                    = azurerm_storage_account.tv_show_rss.primary_connection_string
+    TraktClientId                            = var.trakt_client_id
+    TraktClientSecret                        = var.trakt_client_secret
     # Key Vault references are not yet available on Linux consumption plans
     #TraktClientId                            = "@Microsoft.KeyVault(VaultName=${azurerm_key_vault.tv_show_rss.name};SecretName=${azurerm_key_vault_secret.trakt_client_id.name};SecretVersion=${azurerm_key_vault_secret.trakt_client_id.version})"
     #TraktClientSecret                        = "@Microsoft.KeyVault(VaultName=${azurerm_key_vault.tv_show_rss.name};SecretName=${azurerm_key_vault_secret.trakt_client_secret.name};SecretVersion=${azurerm_key_vault_secret.trakt_client_secret.version})"
-    TraktClientId                            = var.trakt_client_id#"@Microsoft.KeyVault(VaultName=${azurerm_key_vault.tv_show_rss.name};SecretName=${azurerm_key_vault_secret.trakt_client_id.name};SecretVersion=${azurerm_key_vault_secret.trakt_client_id.version})"
-    TraktClientSecret                        = var.trakt_client_secret#"@Microsoft.KeyVault(VaultName=${azurerm_key_vault.tv_show_rss.name};SecretName=${azurerm_key_vault_secret.trakt_client_secret.name};SecretVersion=${azurerm_key_vault_secret.trakt_client_secret.version})"
   }
   site_config {
     use_32_bit_worker_process = false
