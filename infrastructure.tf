@@ -44,17 +44,19 @@ resource "azurerm_key_vault" "tv_show_rss" {
   tenant_id                   = data.azurerm_subscription.current.tenant_id
 
   sku_name = "standard"
-  
-  access_policy {
-    object_id = data.azurerm_client_config.current.object_id
-    tenant_id = data.azurerm_client_config.current.tenant_id
-    
-    secret_permissions = [ 
-      "get", 
-      "set", 
-      "list"
-    ]
-  }
+}
+
+resource "azurerm_key_vault_access_policy" "deployment_user" {
+  key_vault_id = azurerm_key_vault.tv_show_rss.id
+
+  object_id = data.azurerm_client_config.current.object_id
+  tenant_id = data.azurerm_client_config.current.tenant_id
+
+  secret_permissions = [
+    "get",
+    "set",
+    "list"
+  ]
 }
 
 resource "azurerm_key_vault_access_policy" "tv_show_rss" {
