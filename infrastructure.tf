@@ -92,7 +92,7 @@ data "archive_file" "tv_show_rss" {
   # Used results of running `func azure functionapp publish test123xx`
   source_dir = "${path.module}/bin/publish"
   // Should be hash of itself, not timestamp
-  output_path = "${path.module}/bin/function_app.${formatdate("DDMMYYhhmmss", timestamp())}.zip"
+  output_path = "${path.module}/bin/function_app.zip" #"${path.module}/bin/function_app.${formatdate("DDMMYYhhmmss", timestamp())}.zip"
 }
 
 resource "azurerm_storage_blob" "tv_show_rss" {
@@ -122,8 +122,8 @@ data "azurerm_storage_account_sas" "tv_show_rss" {
     file  = false
   }
 
-  start  = timestamp()
-  expiry = timeadd(timestamp(), "10m")
+  start  = "2019-10-21" #timestamp()
+  expiry = "2019-11-21" #timeadd(timestamp(), "10m")
 
   permissions {
     read    = true
@@ -137,11 +137,26 @@ data "azurerm_storage_account_sas" "tv_show_rss" {
   }
 }
 
+resource "azurerm_app_service_plan" "tv_show_rss" {
+  location            = azurerm_resource_group.tv_show_rss.location
+  name                = "WestEuropeLinuxDynamicPlan" # "tvshowrssasp"
+  resource_group_name = azurerm_resource_group.tv_show_rss.name
+  reserved            = true
+  kind                = "functionapp"
+  
+  is_xenon            = false
+  
+  sku {
+    size = "Y1"
+    tier = "Dynamic"
+  }
+}
+
 resource "azurerm_function_app" "tv_show_rss" {
   name                      = "tvshowrssfa"
   location                  = azurerm_resource_group.tv_show_rss.location
   resource_group_name       = azurerm_resource_group.tv_show_rss.name
-  app_service_plan_id       = "/subscriptions/${data.azurerm_subscription.current.subscription_id}/resourceGroups/${azurerm_resource_group.tv_show_rss.name}/providers/Microsoft.Web/serverfarms/WestEuropeLinuxDynamicPlan"
+  app_service_plan_id       = azurerm_app_service_plan.tv_show_rss.id #"/subscriptions/${data.azurerm_subscription.current.subscription_id}/resourceGroups/${azurerm_resource_group.tv_show_rss.name}/providers/Microsoft.Web/serverfarms/WestEuropeLinuxDynamicPlan"
   storage_connection_string = azurerm_storage_account.tv_show_rss.primary_connection_string
   https_only                = true
   enable_builtin_logging    = false
