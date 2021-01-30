@@ -19,8 +19,8 @@ locals {
   trakt_client_id_secret_name     = "TraktClientId"
   trakt_client_secret_secret_name = "TraktClientSecret"
   table_name                      = "series"
-  sas_expiration_start_date       = "2019-10-21" #timestamp()
-  sas_expiration_end_date         = "2019-11-21" #timeadd(timestamp(), "10m")
+  sas_expiration_start_date       = timestamp()
+  sas_expiration_end_date         = timeadd(timestamp(), "10m")
 }
 
 resource "azurerm_resource_group" "tv_show_rss" {
@@ -190,7 +190,7 @@ resource "azurerm_function_app" "tv_show_rss" {
     FUNCTION_APP_EDIT_MODE                   = "readwrite"
     APPINSIGHTS_INSTRUMENTATIONKEY           = azurerm_application_insights.tv_show_rss.instrumentation_key
     AzureWebJobsStorage                      = azurerm_storage_account.tv_show_rss.primary_connection_string
-    WEBSITE_USE_ZIP                          = "https://${azurerm_storage_account.tv_show_rss.name}.blob.core.windows.net/${azurerm_storage_container.deployments_container.name}/${azurerm_storage_blob.tv_show_rss.name}${data.azurerm_storage_account_sas.tv_show_rss.sas}"
+    WEBSITE_RUN_FROM_PACKAGE                 = "https://${azurerm_storage_account.tv_show_rss.name}.blob.core.windows.net/${azurerm_storage_container.deployments_container.name}/${azurerm_storage_blob.tv_show_rss.name}${data.azurerm_storage_account_sas.tv_show_rss.sas}"
     TableConnectionString                    = azurerm_storage_account.tv_show_rss.primary_connection_string
     TraktClientId                            = var.trakt_client_id
     TraktClientSecret                        = var.trakt_client_secret
