@@ -18,7 +18,7 @@ namespace TvShowRss
                                              s.IsRunning).Select(GetLastSeason)
                                                          .WhenAll();
 
-            return seasons.Where(s => s.season != null)
+            return seasons.Where(s => s.season != null) // Upcoming tv series will come up as null
                           .Select(s => (s.name, episodes: GetLatestEpisodes(s.season, fromDate)))
                           .Where(s => s.episodes.Any())
                           .SelectMany(s => s.episodes.Select(te => new Episode
