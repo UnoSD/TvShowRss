@@ -2,8 +2,8 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using TraktApiSharp.Objects.Get.Shows.Episodes;
-using TraktApiSharp.Objects.Get.Shows.Seasons;
+using TraktNet.Objects.Get.Episodes;
+using TraktNet.Objects.Get.Seasons;
 using static TvShowRss.Storage;
 using static TvShowRss.TraktClientFactory;
 
@@ -32,18 +32,18 @@ namespace TvShowRss
                           }));
         }
 
-        static TraktSeason LastSeason(Task<IEnumerable<TraktSeason>> task) => 
+        static ITraktSeason LastSeason(Task<IEnumerable<ITraktSeason>> task) => 
             task.Result
                 .Where(season => season.FirstAired.HasValue)
                 .OrderBy(season => season.Number ?? 0)
                 .LastOrDefault();
 
-        static async Task<(string name, TraktSeason season)> GetLastSeason(Series series) => 
+        static async Task<(string name, ITraktSeason season)> GetLastSeason(Series series) => 
             (series.Name, 
              await TraktClient.GetSeasonsAsync(series.Id.ToString())
                               .ContinueWith(LastSeason));
 
-        static IReadOnlyCollection<TraktEpisode> GetLatestEpisodes(TraktSeason season, DateTime fromDate) =>
+        static IReadOnlyCollection<ITraktEpisode> GetLatestEpisodes(ITraktSeason season, DateTime fromDate) =>
             season.Episodes
                   .Where(e => e.FirstAired >= fromDate &&
                               e.FirstAired <= DateTime.UtcNow)

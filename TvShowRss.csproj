@@ -7,7 +7,7 @@
     <ItemGroup>
         <PackageReference Include="Microsoft.Azure.Cosmos.Table" Version="1.0.8" />
         <PackageReference Include="Microsoft.NET.Sdk.Functions" Version="3.0.11" />
-        <PackageReference Include="TraktApiSharp" Version="0.11.0" />
+        <PackageReference Include="Trakt.NET" Version="1.1.0" />
     </ItemGroup>
     <ItemGroup>
         <None Update="host.json">

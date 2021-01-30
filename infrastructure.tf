@@ -121,7 +121,7 @@ resource "azurerm_storage_blob" "tv_show_rss" {
   storage_account_name   = azurerm_storage_account.tv_show_rss.name
   storage_container_name = azurerm_storage_container.deployments_container.name
 
-  type   = "block"
+  type   = "Block"
   source = data.archive_file.tv_show_rss.output_path
 }
 
@@ -186,12 +186,10 @@ resource "azurerm_function_app" "tv_show_rss" {
   version                   = "~2"
   app_settings = {
     FUNCTIONS_WORKER_RUNTIME                 = "dotnet"
-    FUNCTIONS_EXTENSION_VERSION              = "~2"
+    FUNCTIONS_EXTENSION_VERSION              = "~3"
     FUNCTION_APP_EDIT_MODE                   = "readwrite"
     APPINSIGHTS_INSTRUMENTATIONKEY           = azurerm_application_insights.tv_show_rss.instrumentation_key
     AzureWebJobsStorage                      = azurerm_storage_account.tv_show_rss.primary_connection_string
-    WEBSITE_CONTENTAZUREFILECONNECTIONSTRING = azurerm_storage_account.tv_show_rss.primary_connection_string
-    WEBSITE_CONTENTSHARE                     = local.resources_prefix
     WEBSITE_USE_ZIP                          = "https://${azurerm_storage_account.tv_show_rss.name}.blob.core.windows.net/${azurerm_storage_container.deployments_container.name}/${azurerm_storage_blob.tv_show_rss.name}${data.azurerm_storage_account_sas.tv_show_rss.sas}"
     TableConnectionString                    = azurerm_storage_account.tv_show_rss.primary_connection_string
     TraktClientId                            = var.trakt_client_id

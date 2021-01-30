@@ -2,13 +2,12 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using TraktApiSharp;
-using TraktApiSharp.Enums;
-using TraktApiSharp.Exceptions;
-using TraktApiSharp.Objects.Get.Shows;
-using TraktApiSharp.Objects.Get.Shows.Seasons;
-using TraktApiSharp.Requests.Params;
-using static TvShowRss.ConfigurationProvider;
+using TraktNet;
+using TraktNet.Enums;
+using TraktNet.Exceptions;
+using TraktNet.Objects.Get.Seasons;
+using TraktNet.Objects.Get.Shows;
+using TraktNet.Requests.Parameters;
 using static TvShowRss.ConfigKeys;
 
 namespace TvShowRss
@@ -19,9 +18,9 @@ namespace TvShowRss
         {
             Episodes = true,
             Full = true,
-            Images = false,
+            GuestStars = false,
             Metadata = true,
-            NoSeasons = false
+            NoSeasons = false,
         };
 
         static readonly Lazy<TraktClient> Client =
@@ -31,11 +30,13 @@ namespace TvShowRss
 
         internal static TraktClient TraktClient => Client.Value;
 
-        static async Task<TraktShow> GetShowAsync(this TraktClient client, string serie)
+        static async Task<ITraktShow> GetShowAsync(this TraktClient client, string serie)
         {
             try
             {
-                return await client.Shows.GetShowAsync(serie, Info);
+                var response = await client.Shows.GetShowAsync(serie, Info);
+                
+                return response.Value;
             }
             catch (TraktShowNotFoundException)
             {
@@ -43,23 +44,27 @@ namespace TvShowRss
             }
         }
 
-        internal static Task<IEnumerable<TraktSeason>> GetSeasonsAsync(this TraktClient client, string serie) =>
-            client.Seasons.GetAllSeasonsAsync(serie, Info);
+        internal static async Task<IEnumerable<ITraktSeason>> GetSeasonsAsync(this TraktClient client, string serie)
+        {
+            var response = await client.Seasons.GetAllSeasonsAsync(serie, Info);
+            
+            return response.Value;
+        }
 
-        internal static Task<IReadOnlyCollection<TraktShow>> FindShowByIdAsync(this TraktClient client, string name) =>
+        internal static Task<IReadOnlyCollection<ITraktShow>> FindShowByIdAsync(this TraktClient client, string name) =>
             client.Search
                   .GetTextQueryResultsAsync(TraktSearchResultType.Show, 
                                             name, 
                                             TraktSearchField.Aliases)
-                  .ContinueWith(result => (IReadOnlyCollection<TraktShow>)result.Result
-                                                                                .Items
-                                                                                .Select(item => item.Show)
-                                                                                .ToList())
+                  .ContinueWith(result => (IReadOnlyCollection<ITraktShow>)result.Result
+                                                                                 .Value
+                                                                                 .Select(item => item.Show)
+                                                                                 .ToList())
                   .WithIdResultAsync(client, name);
 
-        static async Task<IReadOnlyCollection<TraktShow>> WithIdResultAsync
+        static async Task<IReadOnlyCollection<ITraktShow>> WithIdResultAsync
         (
-            this Task<IReadOnlyCollection<TraktShow>> showsTask,
+            this Task<IReadOnlyCollection<ITraktShow>> showsTask,
             TraktClient client,
             string name
         )
@@ -69,7 +74,7 @@ namespace TvShowRss
             if (results.Count >= 1) return results;
             
             var show = await client.GetShowAsync(name);
-                
+            
             return show.Ids.Trakt != 0 ? new[] { show } : new TraktShow[0];
         }
     }

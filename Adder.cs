@@ -1,7 +1,7 @@
 ﻿using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
-using TraktApiSharp.Enums;
+using TraktNet.Enums;
 using static TvShowRss.Storage;
 using static TvShowRss.TraktClientFactory;
 
