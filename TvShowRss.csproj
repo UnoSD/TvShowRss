@@ -1,12 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
-        <TargetFramework>netcoreapp2.1</TargetFramework>
-        <AzureFunctionsVersion></AzureFunctionsVersion>
+        <TargetFramework>netcoreapp3.1</TargetFramework>
+        <AzureFunctionsVersion>v3</AzureFunctionsVersion>
         <LangVersion>latest</LangVersion>
     </PropertyGroup>
     <ItemGroup>
-        <PackageReference Include="Microsoft.Azure.Cosmos.Table" Version="1.0.5" />
-        <PackageReference Include="Microsoft.NET.Sdk.Functions" Version="1.0.29" />
+        <PackageReference Include="Microsoft.Azure.Cosmos.Table" Version="1.0.8" />
+        <PackageReference Include="Microsoft.NET.Sdk.Functions" Version="3.0.11" />
         <PackageReference Include="TraktApiSharp" Version="0.11.0" />
     </ItemGroup>
     <ItemGroup>
