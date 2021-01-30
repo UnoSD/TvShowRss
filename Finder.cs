@@ -18,7 +18,8 @@ namespace TvShowRss
                                              s.IsRunning).Select(GetLastSeason)
                                                          .WhenAll();
 
-            return seasons.Select(s => (s.name, episodes: GetLatestEpisodes(s.season, fromDate)))
+            return seasons.Where(s => s.season != null)
+                          .Select(s => (s.name, episodes: GetLatestEpisodes(s.season, fromDate)))
                           .Where(s => s.episodes.Any())
                           .SelectMany(s => s.episodes.Select(te => new Episode
                           {
@@ -35,7 +36,7 @@ namespace TvShowRss
             task.Result
                 .Where(season => season.FirstAired.HasValue)
                 .OrderBy(season => season.Number ?? 0)
-                .Last();
+                .LastOrDefault();
 
         static async Task<(string name, TraktSeason season)> GetLastSeason(Series series) => 
             (series.Name, 
