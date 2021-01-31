@@ -339,3 +339,4 @@ terraform.tfstate*
 files/
 
 .ionide/
+local.settings.json

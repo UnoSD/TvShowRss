@@ -10,5 +10,7 @@ namespace TvShowRss
         internal string Title { get; set; }
         internal string Link { get; set; }
         internal DateTime Date { get; set; }
+        public string ImageLink { get; set; }
+        public string SeasonImageLink { get; set; }
     }
 }

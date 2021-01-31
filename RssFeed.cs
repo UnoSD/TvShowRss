@@ -7,8 +7,7 @@ namespace TvShowRss
     static class RssFeed
     {
         static string ToRssFeed(this string items, string title, string link) => $@"
-<?xml version=""1.0"" encoding=""UTF-8""?>
-<rss version=""2.0"">
+<rss version=""2.0"" xmlns:content=""http://purl.org/rss/1.0/modules/content/"">
     <channel>
         <title>{title}</title>
         <description>TV shows episodes RSS feed</description>
@@ -19,13 +18,19 @@ namespace TvShowRss
 </rss>
 ";
 
-        static string RssItem(string title, string description, string link, string guid, DateTime date) => $@"
+        static string RssItem(string title, string description, string link, string guid, DateTime date, string episodeImageLink, string seasonImageLink) => $@"
 <item>
     <title>{title}</title>
     <description>{description}</description>
     <link>{link}</link>
     <guid isPermaLink=""false"">{guid}</guid>
     <pubDate>{date:ddd, dd MMM yyyy HH:mm:ss K}</pubDate>
+    <content:encoded>
+        <![CDATA[
+            <img src=""{seasonImageLink}"" width=""1"" height=""1""/> 
+            <img src=""{episodeImageLink}""/>
+        ]]>
+    </content:encoded>
 </item>
 ";
 
@@ -40,6 +45,8 @@ namespace TvShowRss
                 episode.Title,
                 episode.Link,
                 episode.Link,
-                episode.Date));
+                episode.Date,
+                episode.ImageLink,
+                episode.SeasonImageLink));
     }
 }

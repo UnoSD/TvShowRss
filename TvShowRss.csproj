@@ -25,4 +25,11 @@
     <ItemGroup>
       <EmbeddedResource Remove="Pulumi\**" />
     </ItemGroup>
+    <!--
+    Use this target to watch code changes and run automatically with:
+    dotnet watch msbuild /t:RunFunctions
+    -->
+    <Target Name="RunFunctions">
+        <Exec Command="func start" />
+    </Target>
 </Project>
