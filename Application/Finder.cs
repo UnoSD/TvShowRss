@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
@@ -21,46 +22,76 @@ namespace TvShowRss
                                              s.IsRunning).Select(GetLastSeason)
                                                          .WhenAll();
 
-            return seasons.Where(s => s.season != null) // Upcoming tv series will come up as null
-                          .Select(s => (s.name, episodes: GetLatestEpisodes(s.season, fromDate), s.tmdbId))
-                          .Where(s => s.episodes.Any())
-                          .SelectMany(s => s.episodes.Select(te => new Episode
-                          {
-                              ShowName = s.name,
-                              Title = te.Title,
-                              Season = te.SeasonNumber ?? 0,
-                              Number = te.Number ?? 0,
-                              Link = GetEpisodeImageLink(s.tmdbId, te.SeasonNumber, te.Number),
-                              Date = te.FirstAired ?? DateTime.MinValue,
-                              ImageLink = GetEpisodeImageLink(s.tmdbId, te.SeasonNumber, te.Number),
-                              SeasonImageLink = GetSeasonImageLink(s.tmdbId, te.SeasonNumber)
-                          }));
+            var seasonImageLinkCache =
+                new ConcurrentDictionary<string, Task<string>>();
+            
+            return await 
+                seasons.Where(s => s.season != null) // Upcoming tv series will come up as null
+                       .Select(s => (s.name, episodes: GetLatestEpisodes(s.season, fromDate), s.tmdbId))
+                       .Where(s => s.episodes.Any())
+                       .SelectMany(s => s.episodes.Select(async te =>
+                       {
+                           var imageLinkAsync = 
+                               s.tmdbId.HasValue && te.SeasonNumber.HasValue ?
+                               await GetImageLinkAsync(s.tmdbId.Value, te.SeasonNumber.Value, te.Number).ConfigureAwait(false) :
+                               string.Empty;
+
+                           var seasonImageLink = 
+                               await seasonImageLinkCache.GetOrAdd($"{s.tmdbId}{te.SeasonNumber}", _ =>
+                                        s.tmdbId.HasValue && te.SeasonNumber.HasValue ?
+                                        GetImageLinkAsync(s.tmdbId.Value, te.SeasonNumber.Value) :
+                                        Task.FromResult(string.Empty))
+                                   .ConfigureAwait(false);
+                           
+                           return new Episode
+                           {
+                               ShowName = s.name,
+                               Title = te.Title,
+                               Season = te.SeasonNumber ?? 0,
+                               Number = te.Number ?? 0,
+                               Link = imageLinkAsync,
+                               Date = te.FirstAired ?? DateTime.MinValue,
+                               ImageLink = imageLinkAsync,
+                               SeasonImageLink = seasonImageLink
+                           };
+                       }))
+                       .WhenAll();
         }
 
         static readonly Lazy<HttpClient> HttpClient = new Lazy<HttpClient>();
 
-        static string GetPosterPath(uint tmdbId, int? season) =>
-            JObject.Parse(
-            HttpClient.Value
-                .GetStringAsync($"https://api.themoviedb.org/3/tv/{tmdbId}/season/{season}?api_key={Config.GetValue(TmdbApiKey)}")
-                .GetAwaiter()
-                .GetResult())
-                ["poster_path"]!.ToString();
-        
-        static string GetPosterPath(uint tmdbId, int? season, int? episode) =>
-            JObject.Parse(
-            HttpClient.Value
-                .GetStringAsync($"https://api.themoviedb.org/3/tv/{tmdbId}/season/{season}/episode/{episode}?api_key={Config.GetValue(TmdbApiKey)}")
-                .GetAwaiter()
-                .GetResult())
-                ["still_path"]!.ToString();
-        
-        static string GetSeasonImageLink(uint? tmdbId, int? season) =>
-            tmdbId.HasValue ? "http://image.tmdb.org/t/p/original" + GetPosterPath(tmdbId.Value, season) : "";
+        static string TmdbApiUrl(uint tmdbId, int season, int? episode) => 
+            $"https://api.themoviedb.org/3/tv/{tmdbId}/season/{season}" +
+            (episode.HasValue ? $"/episode/{episode.Value}" : "") +
+            $"?api_key={Config.GetValue(TmdbApiKey)}";
 
-        static string GetEpisodeImageLink(uint? tmdbId, int? season, int? episode) =>
-            tmdbId.HasValue ? "http://image.tmdb.org/t/p/original" + GetPosterPath(tmdbId.Value, season, episode) : "";
+        static Task<string> GetTmdbDataAsync(uint tmdbId, int season, int? episode) =>
+            HttpClient.Value
+                      .GetAsync(TmdbApiUrl(tmdbId, season, episode))
+                      .Bind(r => r.IsSuccessStatusCode ?
+                                 r.Content.ReadAsStringAsync() :
+                                 Task.FromResult(string.Empty));
 
+        static JObject TryParseJson(string json)
+        {
+            try
+            {
+                return JObject.Parse(json);
+            }
+            catch
+            {
+                return new JObject();
+            }
+        }
+        
+        static Task<string> GetImageLinkAsync(uint tmdbId, int season, int? episode = null) =>
+            GetTmdbDataAsync(tmdbId, season, episode)
+                .Map(TryParseJson)
+                .Map(j => j[episode.HasValue ? 
+                            "still_path" :
+                            "poster_path"]?.ToString())
+                .Map(p => p is null ? "" : "http://image.tmdb.org/t/p/original" + p);
+        
         static ITraktSeason LastSeason(Task<IEnumerable<ITraktSeason>> task) => 
             task.Result
                 .Where(season => season.FirstAired.HasValue)

@@ -23,6 +23,9 @@ namespace TvShowRss
 
         internal static async Task<TOut> Map<TIn, TOut>(this Task<TIn> task, Func<TIn, TOut> func) => 
             func(await task.ConfigureAwait(false));
+        
+        internal static async Task<TOut> Bind<TIn, TOut>(this Task<TIn> task, Func<TIn, Task<TOut>> func) => 
+            await func(await task.ConfigureAwait(false)).ConfigureAwait(false);
 
         internal static string Join(this IEnumerable<string> values) =>
             string.Join('\n', values);        
