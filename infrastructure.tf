@@ -11,6 +11,10 @@ variable "trakt_client_secret" {
   type = string
 }
 
+variable "tmdb_apikey" {
+  type = string
+}
+
 locals {
   resource_group_name             = "TvShowRss"
   location                        = "West Europe"
@@ -18,6 +22,7 @@ locals {
   table_cs_secret_name            = "TableConnectionString"
   trakt_client_id_secret_name     = "TraktClientId"
   trakt_client_secret_secret_name = "TraktClientSecret"
+  tmdb_apikey_secret_name         = "TmdbApiKey"
   table_name                      = "series"
   sas_expiration_start_date       = timestamp()
   sas_expiration_end_date         = timeadd(timestamp(), "10m")
@@ -87,6 +92,12 @@ resource "azurerm_key_vault_secret" "trakt_client_id" {
 resource "azurerm_key_vault_secret" "trakt_client_secret" {
   name         = local.trakt_client_secret_secret_name
   value        = var.trakt_client_secret
+  key_vault_id = azurerm_key_vault.tv_show_rss.id
+}
+
+resource "azurerm_key_vault_secret" "tmdb_apikey_secret" {
+  name         = local.tmdb_apikey_secret_name
+  value        = var.tmdb_apikey
   key_vault_id = azurerm_key_vault.tv_show_rss.id
 }
 
@@ -194,6 +205,7 @@ resource "azurerm_function_app" "tv_show_rss" {
     TableConnectionString                    = azurerm_storage_account.tv_show_rss.primary_connection_string
     TraktClientId                            = var.trakt_client_id
     TraktClientSecret                        = var.trakt_client_secret
+    TmdbApiKey                               = var.tmdb_apikey
     # Key Vault references are not yet available on Linux consumption plans
     #TraktClientId                            = "@Microsoft.KeyVault(VaultName=${azurerm_key_vault.tv_show_rss.name};SecretName=${azurerm_key_vault_secret.trakt_client_id.name};SecretVersion=${azurerm_key_vault_secret.trakt_client_id.version})"
     #TraktClientSecret                        = "@Microsoft.KeyVault(VaultName=${azurerm_key_vault.tv_show_rss.name};SecretName=${azurerm_key_vault_secret.trakt_client_secret.name};SecretVersion=${azurerm_key_vault_secret.trakt_client_secret.version})"

@@ -52,6 +52,8 @@ namespace TvShowRss
             TraktSecretSecret(resourceGroup, appSecrets);
 
             TableConnectionStringSecret(resourceGroup, appSecrets);
+            
+            TmdbApiKeySecret(resourceGroup, appSecrets, config);
 
             // var appPackage = new FileArchive("../bin/publish");
             //
@@ -62,6 +64,25 @@ namespace TvShowRss
             //     new AssetArchive(new Dictionary<string, AssetOrArchive>(keyValuePairs));
         }
 
+        static Secret TmdbApiKeySecret(ResourceGroup resourceGroup, Vault appSecrets, Config config)
+        {
+            return new Secret("tmdbApiKeySecret", new SecretArgs
+            {
+                Properties = new SecretPropertiesArgs
+                {
+                    Attributes = new SecretAttributesArgs
+                    {
+                        Enabled = true
+                    },
+                    ContentType = "",
+                    Value = config.RequireSecret("tmdbApiKey")
+                },
+                ResourceGroupName = resourceGroup.Name,
+                SecretName = "TmdbApiKey",
+                VaultName = appSecrets.Name
+            });
+        }
+        
         static Secret TableConnectionStringSecret(ResourceGroup resourceGroup, Vault appSecrets)
         {
             return new Secret("tableConnectionString", new SecretArgs
