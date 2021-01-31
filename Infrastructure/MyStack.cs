@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using Pulumi;
+using Pulumi.Azure.Storage;
 using Pulumi.AzureNextGen.Authorization.Latest;
 using Pulumi.AzureNextGen.Insights.Latest;
 using Pulumi.AzureNextGen.KeyVault.Latest;
@@ -43,7 +45,7 @@ namespace TvShowRss
 
             AddShowFunction(resourcesPrefix, resourceGroup);
 
-            BlobContainer(mainStorage, resourceGroup);
+            var deploymentsCntainer = BlobContainer(mainStorage, resourceGroup);
 
             var appSecrets = KeyVault(resourceGroup, config, azureConfig, functionApp, resourcesPrefix);
 
@@ -55,13 +57,39 @@ namespace TvShowRss
             
             TmdbApiKeySecret(resourceGroup, appSecrets, config);
 
-            // var appPackage = new FileArchive("../bin/publish");
-            //
-            // var keyValuePairs = Directory.EnumerateFileSystemEntries("../bin/publish")
-            //     .Select(x => new KeyValuePair<string,AssetOrArchive>(x, new FileArchive(x)));
-            //
-            // var assetArchive = 
-            //     new AssetArchive(new Dictionary<string, AssetOrArchive>(keyValuePairs));
+            AppPackage(mainStorage, deploymentsCntainer);
+        }
+        
+#pragma warning disable 618
+        static ZipBlob AppPackage(StorageAccount mainStorage, BlobContainer deploymentsCntainer)
+        {
+            var startInfo = 
+                new ProcessStartInfo(
+                    "dotnet",
+                    "publish -r linux-x64 -o ../Application/bin/publish ../Application/TvShowRss.csproj")
+                {
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+
+            var process = 
+                Process.Start(startInfo)!;
+            
+            process.WaitForExit();
+
+            if (process.ExitCode != 0)
+                throw new Exception("Application compilation error");
+            
+            return new ZipBlob("appPackage", new ZipBlobArgs
+#pragma warning restore 618
+            {
+                AccessTier = "Hot",
+                Content = new FileArchive("../Application/bin/publish"),
+                StorageAccountName = mainStorage.Name,
+                StorageContainerName = deploymentsCntainer.Name,
+                Type = "Block",
+                Name = "application.zip"
+            });
         }
 
         static Secret TmdbApiKeySecret(ResourceGroup resourceGroup, Vault appSecrets, Config config)
