@@ -26,9 +26,9 @@ namespace TvShowRss
     <guid isPermaLink=""false"">{guid}</guid>
     <pubDate>{date:ddd, dd MMM yyyy HH:mm:ss K}</pubDate>
     <content:encoded>
-        <![CDATA[
-            <img src=""{seasonImageLink}"" width=""170"" height=""130""/> 
+        <![CDATA[             
             <img src=""{episodeImageLink}""/>
+            <img src=""{seasonImageLink}""/>
         ]]>
     </content:encoded>
 </item>
