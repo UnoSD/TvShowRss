@@ -27,7 +27,7 @@ namespace TvShowRss
     <pubDate>{date:ddd, dd MMM yyyy HH:mm:ss K}</pubDate>
     <content:encoded>
         <![CDATA[
-            <img src=""{seasonImageLink}"" width=""1"" height=""1""/> 
+            <img src=""{seasonImageLink}"" width=""170"" height=""130""/> 
             <img src=""{episodeImageLink}""/>
         ]]>
     </content:encoded>
