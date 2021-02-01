@@ -3,8 +3,11 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
+using System.Linq;
 using Pulumi;
 using Pulumi.Azure.Storage;
+using Pulumi.Azure.Storage.Inputs;
 using Pulumi.AzureNextGen.Authorization.Latest;
 using Pulumi.AzureNextGen.Insights.Latest;
 using Pulumi.AzureNextGen.KeyVault.Latest;
@@ -18,6 +21,7 @@ using Config = Pulumi.Config;
 using SkuName = Pulumi.AzureNextGen.KeyVault.Latest.SkuName;
 
 // ReSharper disable UnusedMethodReturnValue.Local
+#pragma warning disable 618
 
 namespace TvShowRss
 {
@@ -26,6 +30,9 @@ namespace TvShowRss
         [SuppressMessage("ReSharper", "ObjectCreationAsStatement")]
         public MyStack()
         {
+            //while(!Debugger.IsAttached)
+            //    System.Threading.Thread.Sleep(500);
+
             var config = new Config("azure");
             var resourcesPrefix = config.Require("resourcesPrefix");
             var location = config.Require("location");
@@ -35,17 +42,31 @@ namespace TvShowRss
 
             var mainStorage = MainStorage(resourcesPrefix, resourceGroup);
 
-            AppInsights(resourceGroup, resourcesPrefix);
+            var appInsights = AppInsights(resourceGroup, resourcesPrefix);
+
+            var deploymentsContainer = BlobContainer(mainStorage, resourceGroup);
+
+            var appPackage = AppPackage(mainStorage, deploymentsContainer);
 
             var appServicePlan = AppServicePlan(location, resourceGroup);
 
-            var functionApp = FunctionApp(config, resourcesPrefix, location, resourceGroup, appServicePlan);
+            var storageConnectionString = GetStorageConnectionString(resourceGroup, mainStorage);
+            
+            var blobUrl = GetAppPackageBlobUrl(deploymentsContainer, appPackage.Url, storageConnectionString);
+
+            var functionApp =
+                FunctionApp(config,
+                    resourcesPrefix,
+                    location,
+                    resourceGroup,
+                    appServicePlan,
+                    appInsights,
+                    storageConnectionString,
+                    blobUrl);
 
             GetFeedFunction(resourcesPrefix, resourceGroup);
 
             AddShowFunction(resourcesPrefix, resourceGroup);
-
-            var deploymentsCntainer = BlobContainer(mainStorage, resourceGroup);
 
             var appSecrets = KeyVault(resourceGroup, config, azureConfig, functionApp, resourcesPrefix);
 
@@ -54,16 +75,45 @@ namespace TvShowRss
             TraktSecretSecret(resourceGroup, appSecrets);
 
             TableConnectionStringSecret(resourceGroup, appSecrets);
-            
+
             TmdbApiKeySecret(resourceGroup, appSecrets, config);
 
-            AppPackage(mainStorage, deploymentsCntainer);
+            AppSettings = Output.Unsecret(functionApp.SiteConfig.Apply(x =>
+            {
+                var keyValuePairs =
+                    x!.AppSettings.Select(y => new KeyValuePair<string, string>(y.Name!, y.Value!));
+
+                var dictionary = new Dictionary<string, string>(keyValuePairs);
+
+                return dictionary.ToImmutableDictionary();
+            }));
         }
-        
-#pragma warning disable 618
+
+        static Output<string> GetAppPackageBlobUrl(BlobContainer deploymentsContainer, Output<string> appPackageUrl,
+            Output<string> storageConnectionString) =>
+            Output.Tuple(deploymentsContainer.Name, storageConnectionString)
+                .Apply(tuple =>
+                    GetAccountBlobContainerSAS.InvokeAsync(new GetAccountBlobContainerSASArgs
+                    {
+                        Start = DateTime.Now.ToString("O", CultureInfo.InvariantCulture),
+                        Expiry = DateTime.Now.AddMinutes(10).ToString("O", CultureInfo.InvariantCulture),
+                        ContainerName = tuple.Item1,
+                        HttpsOnly = true,
+                        ConnectionString = tuple.Item2,
+                        Permissions = new GetAccountBlobContainerSASPermissionsArgs
+                        {
+                            Read = true
+                        }
+                    })).Apply(x => appPackageUrl.Apply(url => url + x.Sas));
+
+        // ReSharper disable once UnusedAutoPropertyAccessor.Global
+        // ReSharper disable once MemberCanBePrivate.Global
+        // ReSharper disable once AutoPropertyCanBeMadeGetOnly.Global
+        [Output] public Output<ImmutableDictionary<string, string>> AppSettings { get; set; }
+
         static ZipBlob AppPackage(StorageAccount mainStorage, BlobContainer deploymentsCntainer)
         {
-            var startInfo = 
+            var startInfo =
                 new ProcessStartInfo(
                     "dotnet",
                     "publish -r linux-x64 -o ../Application/bin/publish ../Application/TvShowRss.csproj")
@@ -72,16 +122,15 @@ namespace TvShowRss
                     RedirectStandardError = true
                 };
 
-            var process = 
+            var process =
                 Process.Start(startInfo)!;
-            
+
             process.WaitForExit();
 
             if (process.ExitCode != 0)
                 throw new Exception("Application compilation error");
-            
+
             return new ZipBlob("appPackage", new ZipBlobArgs
-#pragma warning restore 618
             {
                 AccessTier = "Hot",
                 Content = new FileArchive("../Application/bin/publish"),
@@ -110,7 +159,7 @@ namespace TvShowRss
                 VaultName = appSecrets.Name
             });
         }
-        
+
         static Secret TableConnectionStringSecret(ResourceGroup resourceGroup, Vault appSecrets)
         {
             return new Secret("tableConnectionString", new SecretArgs
@@ -194,7 +243,7 @@ namespace TvShowRss
                                 },
                                 TenantId = azureConfig.TenantId
                             },
-                            new AccessPolicyEntryArgs
+                            /*new AccessPolicyEntryArgs
                             {
                                 ObjectId = functionApp.Identity.Apply(x =>
                                     x?.PrincipalId ?? throw new Exception("Missing function identity")),
@@ -208,7 +257,7 @@ namespace TvShowRss
                                     }
                                 },
                                 TenantId = azureConfig.TenantId
-                            }
+                            }*/
                         },
                         EnabledForDeployment = false,
                         EnabledForDiskEncryption = false,
@@ -321,9 +370,9 @@ namespace TvShowRss
         }
 
         static WebApp FunctionApp(Config config, string resourcesPrefix, string location, ResourceGroup resourceGroup,
-            AppServicePlan appServicePlan)
-        {
-            return new WebApp("functionApp", new WebAppArgs
+            AppServicePlan appServicePlan, Component appInsights, Output<string> storageConnectionString,
+            Output<string> appPackageBlobUrl) =>
+            new WebApp("functionApp", new WebAppArgs
             {
                 ClientAffinityEnabled = false,
                 ClientCertEnabled = false,
@@ -362,8 +411,37 @@ namespace TvShowRss
                 Reserved = true,
                 ResourceGroupName = resourceGroup.Name,
                 ScmSiteAlsoStopped = false,
-                ServerFarmId = appServicePlan.Id.Apply(x => x.Replace("serverFarms", "serverfarms"))
+                ServerFarmId = appServicePlan.Id.Apply(x => x.Replace("serverFarms", "serverfarms")),
+                SiteConfig = new SiteConfigArgs
+                {
+                    AppSettings = new Dictionary<string, Input<string>>
+                        {
+                            ["FUNCTIONS_WORKER_RUNTIME"] = "dotnet",
+                            ["FUNCTION_APP_EDIT_MODE"] = "readwrite",
+                            ["APPINSIGHTS_INSTRUMENTATIONKEY"] = appInsights.InstrumentationKey,
+                            ["AzureWebJobsStorage"] = storageConnectionString,
+                            ["WEBSITE_RUN_FROM_PACKAGE"] = appPackageBlobUrl,
+                            ["TableConnectionString"] = storageConnectionString,
+                            ["TraktClientId"] = config.Require("traktClientId"),
+                            ["TraktClientSecret"] = config.RequireSecret("traktClientSecret"),
+                            ["TmdbApiKey"] = config.RequireSecret("tmdbApiKey")
+                            // Key Vault references are not yet available on Linux consumption plans (double check now)
+                            //["TraktClientSecret"]            = $"@Microsoft.KeyVault(VaultName={keyVault.Name};SecretName={traktSecret.Name};SecretVersion=Latest)"
+                        }.Select(kvp => new NameValuePairArgs {Name = kvp.Key, Value = kvp.Value})
+                        .ToList()
+                }
             });
+
+        static Output<string> GetStorageConnectionString(ResourceGroup resourceGroup, StorageAccount mainStorage)
+        {
+            return Output.Tuple(mainStorage.Name, resourceGroup.Name)
+                .Apply(async tuple => (result: await ListStorageAccountKeys.InvokeAsync(new ListStorageAccountKeysArgs
+                {
+                    AccountName = tuple.Item1,
+                    ResourceGroupName = tuple.Item2
+                }), accountName: tuple.Item1))
+                .Apply(tuple => $"DefaultEndpointsProtocol=https;AccountName={tuple.accountName};" +
+                                $"AccountKey={tuple.result.Keys.First().Value}");
         }
 
         static AppServicePlan AppServicePlan(string location, ResourceGroup resourceGroup)
