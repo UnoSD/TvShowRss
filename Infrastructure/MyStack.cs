@@ -18,6 +18,7 @@ using Pulumi.AzureNextGen.Storage.Latest.Inputs;
 using Pulumi.AzureNextGen.Web.Latest;
 using Pulumi.AzureNextGen.Web.Latest.Inputs;
 using Config = Pulumi.Config;
+using Deployment = Pulumi.Deployment;
 using SkuName = Pulumi.AzureNextGen.KeyVault.Latest.SkuName;
 
 // ReSharper disable UnusedMethodReturnValue.Local
@@ -54,6 +55,14 @@ namespace TvShowRss
             
             var blobUrl = GetAppPackageBlobUrl(deploymentsContainer, appPackage.Url, storageConnectionString);
 
+            var previousMd5 = 
+                new StackReference(Deployment.Instance.StackName).Outputs.Apply(d =>
+                {
+                    var tryGetValue = d.TryGetValue(nameof(ApplicationMd5), out var value);
+                    
+                    return tryGetValue ? value.ToString()! : null;
+                });
+            
             var functionApp =
                 FunctionApp(config,
                     resourcesPrefix,
@@ -62,7 +71,9 @@ namespace TvShowRss
                     appServicePlan,
                     appInsights,
                     storageConnectionString,
-                    blobUrl);
+                    blobUrl,
+                    Output.Tuple(previousMd5, appPackage.ContentMd5)
+                        .Apply(tuple => tuple.Item1 == tuple.Item2));
 
             GetFeedFunction(resourcesPrefix, resourceGroup);
 
@@ -78,15 +89,7 @@ namespace TvShowRss
 
             TmdbApiKeySecret(resourceGroup, appSecrets, config);
 
-            AppSettings = Output.Unsecret(functionApp.SiteConfig.Apply(x =>
-            {
-                var keyValuePairs =
-                    x!.AppSettings.Select(y => new KeyValuePair<string, string>(y.Name!, y.Value!));
-
-                var dictionary = new Dictionary<string, string>(keyValuePairs);
-
-                return dictionary.ToImmutableDictionary();
-            }));
+            ApplicationMd5 = appPackage.ContentMd5;
         }
 
         static Output<string> GetAppPackageBlobUrl(BlobContainer deploymentsContainer, Output<string> appPackageUrl,
@@ -106,10 +109,13 @@ namespace TvShowRss
                         }
                     })).Apply(x => appPackageUrl.Apply(url => url + x.Sas));
 
-        // ReSharper disable once UnusedAutoPropertyAccessor.Global
-        // ReSharper disable once MemberCanBePrivate.Global
-        // ReSharper disable once AutoPropertyCanBeMadeGetOnly.Global
-        [Output] public Output<ImmutableDictionary<string, string>> AppSettings { get; set; }
+        // ReSharper disable UnusedAutoPropertyAccessor.Global
+        // ReSharper disable MemberCanBePrivate.Global
+        // ReSharper disable AutoPropertyCanBeMadeGetOnly.Global
+        [Output] public Output<string?> ApplicationMd5 { get; set; }
+        // ReSharper restore UnusedAutoPropertyAccessor.Global
+        // ReSharper restore MemberCanBePrivate.Global
+        // ReSharper restore AutoPropertyCanBeMadeGetOnly.Global
 
         static ZipBlob AppPackage(StorageAccount mainStorage, BlobContainer deploymentsCntainer)
         {
@@ -216,7 +222,7 @@ namespace TvShowRss
         }
 
         static Vault KeyVault(ResourceGroup resourceGroup, Config config, GetClientConfigResult azureConfig,
-            WebApp functionApp, string resourcesPrefix)
+            Output<WebApp> functionApp, string resourcesPrefix)
         {
             return new Vault("appSecrets",
                 new VaultArgs
@@ -243,10 +249,10 @@ namespace TvShowRss
                                 },
                                 TenantId = azureConfig.TenantId
                             },
-                            /*new AccessPolicyEntryArgs
+                            new AccessPolicyEntryArgs
                             {
-                                ObjectId = functionApp.Identity.Apply(x =>
-                                    x?.PrincipalId ?? throw new Exception("Missing function identity")),
+                                ObjectId = functionApp.Apply(fa => fa.Identity).Apply(x =>
+                                    x?.PrincipalId ?? ""),//throw new Exception("Missing function identity")),
                                 Permissions = new PermissionsArgs
                                 {
                                     Secrets =
@@ -257,7 +263,7 @@ namespace TvShowRss
                                     }
                                 },
                                 TenantId = azureConfig.TenantId
-                            }*/
+                            }
                         },
                         EnabledForDeployment = false,
                         EnabledForDiskEncryption = false,
@@ -273,6 +279,12 @@ namespace TvShowRss
                     },
                     ResourceGroupName = resourceGroup.Name,
                     VaultName = resourcesPrefix + "kv"
+                }, new CustomResourceOptions
+                {
+                    IgnoreChanges = new List<string>
+                    {
+                        "properties.accessPolicies"
+                    }
                 });
         }
 
@@ -369,9 +381,10 @@ namespace TvShowRss
             });
         }
 
-        static WebApp FunctionApp(Config config, string resourcesPrefix, string location, ResourceGroup resourceGroup,
+        static Output<WebApp> FunctionApp(Config config, string resourcesPrefix, string location, ResourceGroup resourceGroup,
             AppServicePlan appServicePlan, Component appInsights, Output<string> storageConnectionString,
-            Output<string> appPackageBlobUrl) =>
+            Output<string> appPackageBlobUrl, Output<bool> md5Unchanged) =>
+            md5Unchanged.Apply(md5U => 
             new WebApp("functionApp", new WebAppArgs
             {
                 ClientAffinityEnabled = false,
@@ -430,7 +443,13 @@ namespace TvShowRss
                         }.Select(kvp => new NameValuePairArgs {Name = kvp.Key, Value = kvp.Value})
                         .ToList()
                 }
-            });
+            }, new CustomResourceOptions
+            {
+                IgnoreChanges = md5U ? new List<string>
+                {
+                    "siteConfig.appSettings"
+                } : new List<string>()
+            }));
 
         static Output<string> GetStorageConnectionString(ResourceGroup resourceGroup, StorageAccount mainStorage)
         {
