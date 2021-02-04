@@ -75,9 +75,11 @@ namespace TvShowRss
                     Output.Tuple(previousMd5, appPackage.ContentMd5)
                         .Apply(tuple => tuple.Item1 == tuple.Item2));
 
-            GetFeedFunction(resourcesPrefix, resourceGroup);
+            var functionAppName = functionApp.Apply(fa => fa.Name);
+            
+            GetFeedFunction(functionAppName, resourceGroup);
 
-            AddShowFunction(resourcesPrefix, resourceGroup);
+            AddShowFunction(functionAppName, resourceGroup);
 
             var appSecrets = KeyVault(resourceGroup, config, azureConfig, functionApp, resourcesPrefix);
 
@@ -301,7 +303,7 @@ namespace TvShowRss
             });
         }
 
-        static WebAppFunction AddShowFunction(string resourcesPrefix, ResourceGroup resourceGroup)
+        static WebAppFunction AddShowFunction(Output<string> functionAppName, ResourceGroup resourceGroup)
         {
             return new WebAppFunction("addShowFunction", new WebAppFunctionArgs
             {
@@ -324,24 +326,24 @@ namespace TvShowRss
                     ["scriptFile"] = "../bin/TvShowRss.dll"
                 }.ToImmutableDictionary(),
                 ConfigHref =
-                    $"https://{resourcesPrefix}fa.azurewebsites.net/admin/vfs/home/site/wwwroot/AddShow/function.json",
+                    functionAppName.Apply(n => $"https://{n}.azurewebsites.net/admin/vfs/home/site/wwwroot/AddShow/function.json"),
                 FunctionName = "AddShow",
-                Href = $"https://{resourcesPrefix}fa.azurewebsites.net/admin/functions/AddShow",
-                InvokeUrlTemplate = $"https://{resourcesPrefix}fa.azurewebsites.net/api/addshow",
+                Href = functionAppName.Apply(n => $"https://{n}.azurewebsites.net/admin/functions/AddShow"),
+                InvokeUrlTemplate = functionAppName.Apply(n => $"https://{n}.azurewebsites.net/api/addshow"),
                 IsDisabled = false,
                 Language = "DotNetAssembly",
-                Name = resourcesPrefix + "fa",
+                Name = functionAppName,
                 ResourceGroupName = resourceGroup.Name,
                 ScriptHref =
-                    $"https://{resourcesPrefix}fa.azurewebsites.net/admin/vfs/home/site/wwwroot/bin/TvShowRss.dll",
+                    functionAppName.Apply(n => $"https://{n}.azurewebsites.net/admin/vfs/home/site/wwwroot/bin/TvShowRss.dll"),
                 ScriptRootPathHref =
-                    $"https://{resourcesPrefix}fa.azurewebsites.net/admin/vfs/home/site/wwwroot/AddShow/",
+                    functionAppName.Apply(n => $"https://{n}.azurewebsites.net/admin/vfs/home/site/wwwroot/AddShow/"),
                 TestData = "",
-                TestDataHref = $"https://{resourcesPrefix}fa.azurewebsites.net/admin/vfs/tmp/FunctionsData/AddShow.dat"
+                TestDataHref = functionAppName.Apply(n => $"https://{n}.azurewebsites.net/admin/vfs/tmp/FunctionsData/AddShow.dat")
             });
         }
 
-        static WebAppFunction GetFeedFunction(string resourcesPrefix, ResourceGroup resourceGroup)
+        static WebAppFunction GetFeedFunction(Output<string> functionAppName, ResourceGroup resourceGroup)
         {
             return new WebAppFunction("getFeedFunction", new WebAppFunctionArgs
             {
@@ -364,20 +366,20 @@ namespace TvShowRss
                     ["scriptFile"] = "../bin/TvShowRss.dll"
                 }.ToImmutableDictionary(),
                 ConfigHref =
-                    $"https://{resourcesPrefix}fa.azurewebsites.net/admin/vfs/home/site/wwwroot/GetFeed/function.json",
+                    functionAppName.Apply(n => $"https://{n}.azurewebsites.net/admin/vfs/home/site/wwwroot/GetFeed/function.json"),
                 FunctionName = "GetFeed",
-                Href = $"https://{resourcesPrefix}fa.azurewebsites.net/admin/functions/GetFeed",
-                InvokeUrlTemplate = $"https://{resourcesPrefix}fa.azurewebsites.net/api/getfeed",
+                Href = functionAppName.Apply(n => $"https://{n}.azurewebsites.net/admin/functions/GetFeed"),
+                InvokeUrlTemplate = functionAppName.Apply(n => $"https://{n}.azurewebsites.net/api/getfeed"),
                 IsDisabled = false,
                 Language = "DotNetAssembly",
-                Name = resourcesPrefix + "fa",
+                Name = functionAppName,
                 ResourceGroupName = resourceGroup.Name,
-                ScriptHref =
-                    $"https://{resourcesPrefix}fa.azurewebsites.net/admin/vfs/home/site/wwwroot/bin/TvShowRss.dll",
-                ScriptRootPathHref =
-                    $"https://{resourcesPrefix}fa.azurewebsites.net/admin/vfs/home/site/wwwroot/GetFeed/",
+                ScriptHref = functionAppName.Apply(n => 
+                    $"https://{n}.azurewebsites.net/admin/vfs/home/site/wwwroot/bin/TvShowRss.dll"),
+                ScriptRootPathHref = functionAppName.Apply(n => 
+                    $"https://{n}.azurewebsites.net/admin/vfs/home/site/wwwroot/GetFeed/"),
                 TestData = "",
-                TestDataHref = $"https://{resourcesPrefix}fa.azurewebsites.net/admin/vfs/tmp/FunctionsData/GetFeed.dat"
+                TestDataHref = functionAppName.Apply(n => $"https://{n}.azurewebsites.net/admin/vfs/tmp/FunctionsData/GetFeed.dat")
             });
         }
 
