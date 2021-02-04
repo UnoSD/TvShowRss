@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
@@ -20,6 +19,8 @@ using Pulumi.AzureNextGen.Web.Latest.Inputs;
 using Config = Pulumi.Config;
 using Deployment = Pulumi.Deployment;
 using SkuName = Pulumi.AzureNextGen.KeyVault.Latest.SkuName;
+using Table = Pulumi.AzureNextGen.Storage.Latest.Table;
+using TableArgs = Pulumi.AzureNextGen.Storage.Latest.TableArgs;
 
 // ReSharper disable UnusedMethodReturnValue.Local
 #pragma warning disable 618
@@ -43,6 +44,13 @@ namespace TvShowRss
 
             var mainStorage = MainStorage(resourcesPrefix, resourceGroup);
 
+            new Table("storageSeriesTable", new TableArgs
+            {
+                ResourceGroupName = resourceGroup.Name,
+                AccountName = mainStorage.Name,
+                TableName = "series"
+            });
+            
             var appInsights = AppInsights(resourceGroup, resourcesPrefix);
 
             var deploymentsContainer = BlobContainer(mainStorage, resourceGroup);
@@ -74,12 +82,6 @@ namespace TvShowRss
                     blobUrl,
                     Output.Tuple(previousMd5, appPackage.ContentMd5)
                         .Apply(tuple => tuple.Item1 == tuple.Item2));
-
-            var functionAppName = functionApp.Apply(fa => fa.Name);
-            
-            GetFeedFunction(functionAppName, resourceGroup);
-
-            AddShowFunction(functionAppName, resourceGroup);
 
             var appSecrets = KeyVault(resourceGroup, config, azureConfig, functionApp, resourcesPrefix);
 
@@ -300,86 +302,6 @@ namespace TvShowRss
                 DenyEncryptionScopeOverride = false,
                 PublicAccess = PublicAccess.None,
                 ResourceGroupName = resourceGroup.Name
-            });
-        }
-
-        static WebAppFunction AddShowFunction(Output<string> functionAppName, ResourceGroup resourceGroup)
-        {
-            return new WebAppFunction("addShowFunction", new WebAppFunctionArgs
-            {
-                Config = new Dictionary<string, object>
-                {
-                    ["bindings"] = new[]
-                    {
-                        new Dictionary<string, object>
-                        {
-                            ["authLevel"] = "function",
-                            ["methods"] = new[] {"post"},
-                            ["name"] = "req",
-                            ["type"] = "httpTrigger"
-                        }.ToImmutableDictionary()
-                    },
-                    ["configurationSource"] = "attributes",
-                    ["disabled"] = false,
-                    ["entryPoint"] = "TvShowRss.AddShow.Run",
-                    ["generatedBy"] = "Microsoft.NET.Sdk.Functions-3.0.11",
-                    ["scriptFile"] = "../bin/TvShowRss.dll"
-                }.ToImmutableDictionary(),
-                ConfigHref =
-                    functionAppName.Apply(n => $"https://{n}.azurewebsites.net/admin/vfs/home/site/wwwroot/AddShow/function.json"),
-                FunctionName = "AddShow",
-                Href = functionAppName.Apply(n => $"https://{n}.azurewebsites.net/admin/functions/AddShow"),
-                InvokeUrlTemplate = functionAppName.Apply(n => $"https://{n}.azurewebsites.net/api/addshow"),
-                IsDisabled = false,
-                Language = "DotNetAssembly",
-                Name = functionAppName,
-                ResourceGroupName = resourceGroup.Name,
-                ScriptHref =
-                    functionAppName.Apply(n => $"https://{n}.azurewebsites.net/admin/vfs/home/site/wwwroot/bin/TvShowRss.dll"),
-                ScriptRootPathHref =
-                    functionAppName.Apply(n => $"https://{n}.azurewebsites.net/admin/vfs/home/site/wwwroot/AddShow/"),
-                TestData = "",
-                TestDataHref = functionAppName.Apply(n => $"https://{n}.azurewebsites.net/admin/vfs/tmp/FunctionsData/AddShow.dat")
-            });
-        }
-
-        static WebAppFunction GetFeedFunction(Output<string> functionAppName, ResourceGroup resourceGroup)
-        {
-            return new WebAppFunction("getFeedFunction", new WebAppFunctionArgs
-            {
-                Config = new Dictionary<string, object>
-                {
-                    ["bindings"] = new[]
-                    {
-                        new Dictionary<string, object>
-                        {
-                            ["authLevel"] = "function",
-                            ["methods"] = new[] {"get"},
-                            ["name"] = "req",
-                            ["type"] = "httpTrigger"
-                        }.ToImmutableDictionary()
-                    },
-                    ["configurationSource"] = "attributes",
-                    ["disabled"] = false,
-                    ["entryPoint"] = "TvShowRss.GetFeed.Run",
-                    ["generatedBy"] = "Microsoft.NET.Sdk.Functions-3.0.11",
-                    ["scriptFile"] = "../bin/TvShowRss.dll"
-                }.ToImmutableDictionary(),
-                ConfigHref =
-                    functionAppName.Apply(n => $"https://{n}.azurewebsites.net/admin/vfs/home/site/wwwroot/GetFeed/function.json"),
-                FunctionName = "GetFeed",
-                Href = functionAppName.Apply(n => $"https://{n}.azurewebsites.net/admin/functions/GetFeed"),
-                InvokeUrlTemplate = functionAppName.Apply(n => $"https://{n}.azurewebsites.net/api/getfeed"),
-                IsDisabled = false,
-                Language = "DotNetAssembly",
-                Name = functionAppName,
-                ResourceGroupName = resourceGroup.Name,
-                ScriptHref = functionAppName.Apply(n => 
-                    $"https://{n}.azurewebsites.net/admin/vfs/home/site/wwwroot/bin/TvShowRss.dll"),
-                ScriptRootPathHref = functionAppName.Apply(n => 
-                    $"https://{n}.azurewebsites.net/admin/vfs/home/site/wwwroot/GetFeed/"),
-                TestData = "",
-                TestDataHref = functionAppName.Apply(n => $"https://{n}.azurewebsites.net/admin/vfs/tmp/FunctionsData/GetFeed.dat")
             });
         }
 
