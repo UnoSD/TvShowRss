@@ -76,12 +76,7 @@ namespace TvShowRss
                 new StackReference(Deployment.Instance.StackName);
 
             var previousMd5 = 
-                stack.Outputs.Apply(d =>
-                {
-                    var tryGetValue = d.TryGetValue(nameof(ApplicationMd5), out var value);
-                    
-                    return tryGetValue ? value.ToString()! : null;
-                });
+                (string?)stack.GetValueAsync(nameof(ApplicationMd5)).Result;
             
             var secretUris = 
                 ((ImmutableDictionary<string, object>?)stack.GetValueAsync(nameof(SecretsUris)).Result)
@@ -95,8 +90,7 @@ namespace TvShowRss
                     appServicePlan,
                     appInsights,
                     blobUrl,
-                    Output.Tuple(previousMd5, appPackage.ContentMd5)
-                        .Apply(tuple => tuple.Item1 == tuple.Item2),
+                    appPackage.ContentMd5.Apply(blobMd5 => blobMd5 == previousMd5),
                     secretUris);
 
             var appSecrets = KeyVault(resourceGroup, config, azureConfig, functionApp, resourcesPrefix);
