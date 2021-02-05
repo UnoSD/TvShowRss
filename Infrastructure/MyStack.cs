@@ -81,7 +81,7 @@ namespace TvShowRss
                 (string?)stack.GetValueAsync(nameof(ApplicationMd5)).Result;
             
             var secretUris = 
-                ((ImmutableDictionary<string, object>?)stack.GetValueAsync(nameof(SecretsUris)).Result)
+                ((ImmutableDictionary<string, object>?)stack.GetValueAsync(nameof(SecretsUris)).Result)?
                 .ToImmutableDictionary(kvp => kvp.Key, kvp => (string)kvp.Value);
 
             // Could also use the Git commit, but won't work during dev
@@ -98,7 +98,15 @@ namespace TvShowRss
                     appSourceMd5 == previousMd5,
                     secretUris);
 
-            var appSecrets = KeyVault(resourceGroup, config, azureConfig, functionApp, resourcesPrefix);
+            // Workaround for a Pulumi issue that forgets the function identity
+            var savedIdentity = stack.GetValueAsync(nameof(FunctionIdentity)).Result?.ToString();
+            
+            var appSecrets = KeyVault(resourceGroup, 
+                config, 
+                azureConfig, 
+                functionApp, 
+                resourcesPrefix, 
+                savedIdentity);
 
             var traktIdSecret = TraktIdSecret(resourceGroup, appSecrets, config);
 
@@ -110,6 +118,8 @@ namespace TvShowRss
 
             ApplicationMd5 = Output.Create(appSourceMd5);
 
+            FunctionIdentity = functionApp.Identity.Apply(x => x?.PrincipalId ?? savedIdentity ?? string.Empty);
+            
             SecretsUris =
                 Output.Tuple(traktIdSecret.Properties,
                         traktSecretSecret.Properties,
@@ -152,8 +162,6 @@ namespace TvShowRss
             foreach (var action in actions)
                 action(md5);
 
-            
-            
             return BitConverter.ToString(md5.Hash);
         }
 
@@ -162,6 +170,7 @@ namespace TvShowRss
         // ReSharper disable MemberCanBePrivate.Global
         [Output] public Output<ImmutableDictionary<string, string>> SecretsUris { get; set; }
         [Output] public Output<string> ApplicationMd5 { get; set; }
+        [Output] public Output<string> FunctionIdentity { get; set; }
         // ReSharper restore UnusedAutoPropertyAccessor.Global
         // ReSharper restore MemberCanBePrivate.Global
         // ReSharper restore AutoPropertyCanBeMadeGetOnly.Global
@@ -291,7 +300,7 @@ namespace TvShowRss
         }
 
         static Vault KeyVault(ResourceGroup resourceGroup, Config config, GetClientConfigResult azureConfig,
-            WebApp functionApp, string resourcesPrefix)
+            WebApp functionApp, string resourcesPrefix, string? savedIdentity)
         {
             return new Vault("appSecrets",
                 new VaultArgs
@@ -305,23 +314,25 @@ namespace TvShowRss
                         {
                             new AccessPolicyEntryArgs
                             {
-                                //ObjectId = azureConfig.ObjectId,
-                                ObjectId = config.Require("keyVaultManagerObjectId"),
+                                ObjectId = config.GetSecret("keyVaultManagerObjectId") ?? Output.Create(azureConfig.ObjectId),
                                 Permissions = new PermissionsArgs
                                 {
                                     Secrets =
                                     {
                                         "get",
                                         "set",
-                                        "list"
+                                        "list",
+                                        "delete"
                                     }
                                 },
                                 TenantId = azureConfig.TenantId
                             },
                             new AccessPolicyEntryArgs
                             {
-                                ObjectId = functionApp.Identity.Apply(x =>
-                                    x?.PrincipalId ?? ""), // throw new Exception("Missing function identity")),
+                                ObjectId = 
+                                    functionApp.Identity.Apply(x => x?.PrincipalId ?? savedIdentity ??
+                                                        throw new Exception("Missing function identity")),
+                                                        //""), 
                                 Permissions = new PermissionsArgs
                                 {
                                     Secrets =
@@ -348,12 +359,6 @@ namespace TvShowRss
                     },
                     ResourceGroupName = resourceGroup.Name,
                     VaultName = resourcesPrefix + "kv"
-                }, new CustomResourceOptions
-                {
-                    IgnoreChanges = new List<string>
-                    {
-                        "properties.accessPolicies"
-                    }
                 });
         }
 
