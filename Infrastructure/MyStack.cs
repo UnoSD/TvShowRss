@@ -4,7 +4,10 @@ using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using Pulumi;
 using Pulumi.Azure.Storage;
 using Pulumi.Azure.Storage.Inputs;
@@ -23,18 +26,17 @@ using SkuName = Pulumi.AzureNextGen.KeyVault.Latest.SkuName;
 using Table = Pulumi.AzureNextGen.Storage.Latest.Table;
 using TableArgs = Pulumi.AzureNextGen.Storage.Latest.TableArgs;
 
-// ReSharper disable UnusedMethodReturnValue.Local
-#pragma warning disable 618
-
 namespace TvShowRss
 {
     class MyStack : Stack
     {
         const string TraktIdSecretOutputName = "TraktIdSecret";
-        const string TraktSecretSecretOutputName = "traktSecretSecret";
-        const string TableConnectionStringSecretOutputName = "tableConnectionStringSecret";
-        const string TmdbApiKeySecretOutputName = "tmdbApiKeySecret";
+        const string TraktSecretSecretOutputName = "TraktSecretSecret";
+        const string TableConnectionStringSecretOutputName = "TableConnectionStringSecret";
+        const string TmdbApiKeySecretOutputName = "TmdbApiKeySecret";
         
+        const string AppPath = "../Application/bin/publish";
+
         // This stack needs to be deployed twice, the second time, it will set the Key Vault
         // secret URIs in the app settings.
         
@@ -82,15 +84,18 @@ namespace TvShowRss
                 ((ImmutableDictionary<string, object>?)stack.GetValueAsync(nameof(SecretsUris)).Result)
                 .ToImmutableDictionary(kvp => kvp.Key, kvp => (string)kvp.Value);
 
+            // Could also use the Git commit, but won't work during dev
+            var appSourceMd5 = GetAppSourceMd5(AppPath);
+
             var functionApp =
                 FunctionApp(config,
                     resourcesPrefix,
                     location,
                     resourceGroup,
-                    appServicePlan,
+                    appServicePlan.Id,
                     appInsights,
                     blobUrl,
-                    appPackage.ContentMd5.Apply(blobMd5 => blobMd5 == previousMd5),
+                    appSourceMd5 == previousMd5,
                     secretUris);
 
             var appSecrets = KeyVault(resourceGroup, config, azureConfig, functionApp, resourcesPrefix);
@@ -103,7 +108,7 @@ namespace TvShowRss
 
             var tmdbApiKeySecret = TmdbApiKeySecret(resourceGroup, appSecrets, config);
 
-            ApplicationMd5 = appPackage.ContentMd5;
+            ApplicationMd5 = Output.Create(appSourceMd5);
 
             SecretsUris =
                 Output.Tuple(traktIdSecret.Properties,
@@ -119,11 +124,44 @@ namespace TvShowRss
                     }.ToImmutableDictionary());
         }
 
-        // ReSharper disable once AutoPropertyCanBeMadeGetOnly.Global
-        // ReSharper disable once UnusedAutoPropertyAccessor.Global
-        // ReSharper disable once MemberCanBePrivate.Global
+        static string GetAppSourceMd5(string appPath)
+        {
+            IEnumerable<Action<ICryptoTransform>> AddBlocks(string file, bool isLast)
+            {
+                var path = Encoding.UTF8.GetBytes(file.Substring(appPath.Length + 1));
+                
+                yield return ct => ct.TransformBlock(path, 0, path.Length, path, 0);
+                
+                var content = File.ReadAllBytes(file);
+
+                yield return isLast ?
+                    (Action<ICryptoTransform>)(ct => ct.TransformFinalBlock(content, 0, content.Length)) : 
+                                               ct => ct.TransformBlock(content, 0, content.Length, content, 0);
+            }
+
+            var allFiles = 
+                Directory.EnumerateFiles(appPath, "*", SearchOption.AllDirectories)
+                         .OrderBy(fn => fn)
+                         .ToList();
+            
+            var actions =
+                allFiles.SelectMany((file, index) => AddBlocks(file, index == allFiles.Count - 1));
+
+            using var md5 = MD5.Create();
+
+            foreach (var action in actions)
+                action(md5);
+
+            
+            
+            return BitConverter.ToString(md5.Hash);
+        }
+
+        // ReSharper disable AutoPropertyCanBeMadeGetOnly.Global
+        // ReSharper disable UnusedAutoPropertyAccessor.Global
+        // ReSharper disable MemberCanBePrivate.Global
         [Output] public Output<ImmutableDictionary<string, string>> SecretsUris { get; set; }
-        [Output] public Output<string?> ApplicationMd5 { get; set; }
+        [Output] public Output<string> ApplicationMd5 { get; set; }
         // ReSharper restore UnusedAutoPropertyAccessor.Global
         // ReSharper restore MemberCanBePrivate.Global
         // ReSharper restore AutoPropertyCanBeMadeGetOnly.Global
@@ -145,7 +183,7 @@ namespace TvShowRss
                         }
                     })).Apply(x => appPackageUrl.Apply(url => url + x.Sas));
         
-        static ZipBlob AppPackage(StorageAccount mainStorage, BlobContainer deploymentsCntainer)
+        static Blob AppPackage(StorageAccount mainStorage, BlobContainer deploymentsCntainer)
         {
             var startInfo =
                 new ProcessStartInfo(
@@ -164,10 +202,10 @@ namespace TvShowRss
             if (process.ExitCode != 0)
                 throw new Exception("Application compilation error");
 
-            return new ZipBlob("appPackage", new ZipBlobArgs
+            return new Blob("appPackage", new BlobArgs
             {
                 AccessTier = "Hot",
-                Content = new FileArchive("../Application/bin/publish"),
+                Source = new FileArchive(AppPath),
                 StorageAccountName = mainStorage.Name,
                 StorageContainerName = deploymentsCntainer.Name,
                 Type = "Block",
@@ -253,7 +291,7 @@ namespace TvShowRss
         }
 
         static Vault KeyVault(ResourceGroup resourceGroup, Config config, GetClientConfigResult azureConfig,
-            Output<WebApp> functionApp, string resourcesPrefix)
+            WebApp functionApp, string resourcesPrefix)
         {
             return new Vault("appSecrets",
                 new VaultArgs
@@ -282,8 +320,8 @@ namespace TvShowRss
                             },
                             new AccessPolicyEntryArgs
                             {
-                                ObjectId = functionApp.Apply(fa => fa.Identity).Apply(x =>
-                                    x?.PrincipalId ?? ""),//throw new Exception("Missing function identity")),
+                                ObjectId = functionApp.Identity.Apply(x =>
+                                    x?.PrincipalId ?? ""), // throw new Exception("Missing function identity")),
                                 Permissions = new PermissionsArgs
                                 {
                                     Secrets =
@@ -332,12 +370,11 @@ namespace TvShowRss
             });
         }
 
-        static Output<WebApp> FunctionApp(Config config, string resourcesPrefix, string location,
+        static WebApp FunctionApp(Config config, string resourcesPrefix, string location,
             ResourceGroup resourceGroup,
-            AppServicePlan appServicePlan, Component appInsights,
-            Output<string> appPackageBlobUrl, Output<bool> md5Unchanged,
+            Output<string> appServicePlanId, Component appInsights,
+            Output<string> appPackageBlobUrl, bool md5Unchanged,
             ImmutableDictionary<string, string>? secretsUris) =>
-            md5Unchanged.Apply(md5U => 
             new WebApp("functionApp", new WebAppArgs
             {
                 ClientAffinityEnabled = false,
@@ -377,7 +414,7 @@ namespace TvShowRss
                 Reserved = true,
                 ResourceGroupName = resourceGroup.Name,
                 ScmSiteAlsoStopped = false,
-                ServerFarmId = appServicePlan.Id.Apply(x => x.Replace("serverFarms", "serverfarms")),
+                ServerFarmId = appServicePlanId.Apply(x => x.Replace("serverFarms", "serverfarms")),
                 SiteConfig = new SiteConfigArgs
                 {
                     AppSettings = new Dictionary<string, Input<string>>
@@ -398,12 +435,12 @@ namespace TvShowRss
                 }
             }, new CustomResourceOptions
             {
-                IgnoreChanges = md5U ? new List<string>
+                IgnoreChanges = md5Unchanged ? new List<string>
                 {
                     // This is why WEBSITE_RUN_FROM_PACKAGE must stay at first position
                     "siteConfig.appSettings[0].value"
                 } : new List<string>()
-            }));
+            });
 
         static string GetSecretUri(ImmutableDictionary<string, string>? secretUris, string outputName) => 
             !(secretUris is null) && secretUris.TryGetValue(outputName, out var value) ?
