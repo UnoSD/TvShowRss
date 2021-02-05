@@ -181,8 +181,8 @@ namespace TvShowRss
                 .Apply(tuple =>
                     GetAccountBlobContainerSAS.InvokeAsync(new GetAccountBlobContainerSASArgs
                     {
-                        Start = DateTime.Now.ToString("O", CultureInfo.InvariantCulture),
-                        Expiry = DateTime.Now.AddMinutes(10).ToString("O", CultureInfo.InvariantCulture),
+                        Start = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture),
+                        Expiry = DateTime.UtcNow.AddMinutes(10).ToString("O", CultureInfo.InvariantCulture),
                         ContainerName = tuple.Item1,
                         HttpsOnly = true,
                         ConnectionString = tuple.Item2,
