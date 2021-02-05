@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
@@ -29,6 +30,14 @@ namespace TvShowRss
 {
     class MyStack : Stack
     {
+        const string TraktIdSecretOutputName = "TraktIdSecret";
+        const string TraktSecretSecretOutputName = "traktSecretSecret";
+        const string TableConnectionStringSecretOutputName = "tableConnectionStringSecret";
+        const string TmdbApiKeySecretOutputName = "tmdbApiKeySecret";
+        
+        // This stack needs to be deployed twice, the second time, it will set the Key Vault
+        // secret URIs in the app settings.
+        
         [SuppressMessage("ReSharper", "ObjectCreationAsStatement")]
         public MyStack()
         {
@@ -63,14 +72,21 @@ namespace TvShowRss
             
             var blobUrl = GetAppPackageBlobUrl(deploymentsContainer, appPackage.Url, storageConnectionString);
 
+            var stack = 
+                new StackReference(Deployment.Instance.StackName);
+
             var previousMd5 = 
-                new StackReference(Deployment.Instance.StackName).Outputs.Apply(d =>
+                stack.Outputs.Apply(d =>
                 {
                     var tryGetValue = d.TryGetValue(nameof(ApplicationMd5), out var value);
                     
                     return tryGetValue ? value.ToString()! : null;
                 });
             
+            var secretUris = 
+                ((ImmutableDictionary<string, object>?)stack.GetValueAsync(nameof(SecretsUris)).Result)
+                .ToImmutableDictionary(kvp => kvp.Key, kvp => (string)kvp.Value);
+
             var functionApp =
                 FunctionApp(config,
                     resourcesPrefix,
@@ -78,23 +94,45 @@ namespace TvShowRss
                     resourceGroup,
                     appServicePlan,
                     appInsights,
-                    storageConnectionString,
                     blobUrl,
                     Output.Tuple(previousMd5, appPackage.ContentMd5)
-                        .Apply(tuple => tuple.Item1 == tuple.Item2));
+                        .Apply(tuple => tuple.Item1 == tuple.Item2),
+                    secretUris);
 
             var appSecrets = KeyVault(resourceGroup, config, azureConfig, functionApp, resourcesPrefix);
 
-            TraktIdSecret(resourceGroup, appSecrets);
+            var traktIdSecret = TraktIdSecret(resourceGroup, appSecrets, config);
 
-            TraktSecretSecret(resourceGroup, appSecrets);
+            var traktSecretSecret = TraktSecretSecret(resourceGroup, appSecrets, config);
 
-            TableConnectionStringSecret(resourceGroup, appSecrets);
+            var tableConnectionStringSecret = TableConnectionStringSecret(resourceGroup, appSecrets, storageConnectionString);
 
-            TmdbApiKeySecret(resourceGroup, appSecrets, config);
+            var tmdbApiKeySecret = TmdbApiKeySecret(resourceGroup, appSecrets, config);
 
             ApplicationMd5 = appPackage.ContentMd5;
+
+            SecretsUris =
+                Output.Tuple(traktIdSecret.Properties,
+                        traktSecretSecret.Properties,
+                        tableConnectionStringSecret.Properties,
+                        tmdbApiKeySecret.Properties)
+                    .Apply(tuple => new Dictionary<string, string>
+                    {
+                        [TraktIdSecretOutputName] = tuple.Item1.SecretUriWithVersion,
+                        [TraktSecretSecretOutputName] = tuple.Item2.SecretUriWithVersion,
+                        [TableConnectionStringSecretOutputName] = tuple.Item3.SecretUriWithVersion,
+                        [TmdbApiKeySecretOutputName] = tuple.Item4.SecretUriWithVersion,
+                    }.ToImmutableDictionary());
         }
+
+        // ReSharper disable once AutoPropertyCanBeMadeGetOnly.Global
+        // ReSharper disable once UnusedAutoPropertyAccessor.Global
+        // ReSharper disable once MemberCanBePrivate.Global
+        [Output] public Output<ImmutableDictionary<string, string>> SecretsUris { get; set; }
+        [Output] public Output<string?> ApplicationMd5 { get; set; }
+        // ReSharper restore UnusedAutoPropertyAccessor.Global
+        // ReSharper restore MemberCanBePrivate.Global
+        // ReSharper restore AutoPropertyCanBeMadeGetOnly.Global
 
         static Output<string> GetAppPackageBlobUrl(BlobContainer deploymentsContainer, Output<string> appPackageUrl,
             Output<string> storageConnectionString) =>
@@ -112,15 +150,7 @@ namespace TvShowRss
                             Read = true
                         }
                     })).Apply(x => appPackageUrl.Apply(url => url + x.Sas));
-
-        // ReSharper disable UnusedAutoPropertyAccessor.Global
-        // ReSharper disable MemberCanBePrivate.Global
-        // ReSharper disable AutoPropertyCanBeMadeGetOnly.Global
-        [Output] public Output<string?> ApplicationMd5 { get; set; }
-        // ReSharper restore UnusedAutoPropertyAccessor.Global
-        // ReSharper restore MemberCanBePrivate.Global
-        // ReSharper restore AutoPropertyCanBeMadeGetOnly.Global
-
+        
         static ZipBlob AppPackage(StorageAccount mainStorage, BlobContainer deploymentsCntainer)
         {
             var startInfo =
@@ -170,7 +200,8 @@ namespace TvShowRss
             });
         }
 
-        static Secret TableConnectionStringSecret(ResourceGroup resourceGroup, Vault appSecrets)
+        static Secret TableConnectionStringSecret(ResourceGroup resourceGroup, Vault appSecrets,
+            Output<string> storageConnectionString)
         {
             return new Secret("tableConnectionString", new SecretArgs
             {
@@ -180,7 +211,8 @@ namespace TvShowRss
                     {
                         Enabled = true
                     },
-                    ContentType = ""
+                    ContentType = "",
+                    Value = storageConnectionString
                 },
                 ResourceGroupName = resourceGroup.Name,
                 SecretName = "TableConnectionString",
@@ -188,7 +220,7 @@ namespace TvShowRss
             });
         }
 
-        static Secret TraktSecretSecret(ResourceGroup resourceGroup, Vault appSecrets)
+        static Secret TraktSecretSecret(ResourceGroup resourceGroup, Vault appSecrets, Config config)
         {
             return new Secret("traktClientSecretSecret", new SecretArgs
             {
@@ -198,7 +230,8 @@ namespace TvShowRss
                     {
                         Enabled = true
                     },
-                    ContentType = ""
+                    ContentType = "",
+                    Value = config.RequireSecret("traktClientSecret")
                 },
                 ResourceGroupName = resourceGroup.Name,
                 SecretName = "TraktClientSecret",
@@ -206,7 +239,7 @@ namespace TvShowRss
             });
         }
 
-        static Secret TraktIdSecret(ResourceGroup resourceGroup, Vault appSecrets)
+        static Secret TraktIdSecret(ResourceGroup resourceGroup, Vault appSecrets, Config config)
         {
             return new Secret("traktClientIdSecret", new SecretArgs
             {
@@ -216,8 +249,8 @@ namespace TvShowRss
                     {
                         Enabled = true
                     },
-                    ContentType = ""
-                    //Value = config.RequireSecret("traktClientId")
+                    ContentType = "",
+                    Value = config.RequireSecret("traktClientId")
                 },
                 ResourceGroupName = resourceGroup.Name,
                 SecretName = "TraktClientId",
@@ -305,9 +338,11 @@ namespace TvShowRss
             });
         }
 
-        static Output<WebApp> FunctionApp(Config config, string resourcesPrefix, string location, ResourceGroup resourceGroup,
-            AppServicePlan appServicePlan, Component appInsights, Output<string> storageConnectionString,
-            Output<string> appPackageBlobUrl, Output<bool> md5Unchanged) =>
+        static Output<WebApp> FunctionApp(Config config, string resourcesPrefix, string location,
+            ResourceGroup resourceGroup,
+            AppServicePlan appServicePlan, Component appInsights,
+            Output<string> appPackageBlobUrl, Output<bool> md5Unchanged,
+            ImmutableDictionary<string, string>? secretsUris) =>
             md5Unchanged.Apply(md5U => 
             new WebApp("functionApp", new WebAppArgs
             {
@@ -353,17 +388,17 @@ namespace TvShowRss
                 {
                     AppSettings = new Dictionary<string, Input<string>>
                         {
+                            // WEBSITE_RUN_FROM_PACKAGE must stay on top to be ignored if MD5 unchanged
+                            ["WEBSITE_RUN_FROM_PACKAGE"] = appPackageBlobUrl,
+                            
                             ["FUNCTIONS_WORKER_RUNTIME"] = "dotnet",
                             ["FUNCTION_APP_EDIT_MODE"] = "readwrite",
                             ["APPINSIGHTS_INSTRUMENTATIONKEY"] = appInsights.InstrumentationKey,
-                            ["AzureWebJobsStorage"] = storageConnectionString,
-                            ["WEBSITE_RUN_FROM_PACKAGE"] = appPackageBlobUrl,
-                            ["TableConnectionString"] = storageConnectionString,
-                            ["TraktClientId"] = config.Require("traktClientId"),
-                            ["TraktClientSecret"] = config.RequireSecret("traktClientSecret"),
-                            ["TmdbApiKey"] = config.RequireSecret("tmdbApiKey")
-                            // Key Vault references are not yet available on Linux consumption plans (double check now)
-                            //["TraktClientSecret"]            = $"@Microsoft.KeyVault(VaultName={keyVault.Name};SecretName={traktSecret.Name};SecretVersion=Latest)"
+                            ["AzureWebJobsStorage"] = $"@Microsoft.KeyVault(SecretUri={GetSecretUri(secretsUris, TableConnectionStringSecretOutputName)})",
+                            ["TableConnectionString"] = $"@Microsoft.KeyVault(SecretUri={GetSecretUri(secretsUris, TableConnectionStringSecretOutputName)})",
+                            ["TraktClientId"] = $"@Microsoft.KeyVault(SecretUri={GetSecretUri(secretsUris, TraktIdSecretOutputName)})",
+                            ["TraktClientSecret"] = $"@Microsoft.KeyVault(SecretUri={GetSecretUri(secretsUris, TraktSecretSecretOutputName)})",
+                            ["TmdbApiKey"] = $"@Microsoft.KeyVault(SecretUri={GetSecretUri(secretsUris, TmdbApiKeySecretOutputName)})",
                         }.Select(kvp => new NameValuePairArgs {Name = kvp.Key, Value = kvp.Value})
                         .ToList()
                 }
@@ -371,9 +406,15 @@ namespace TvShowRss
             {
                 IgnoreChanges = md5U ? new List<string>
                 {
-                    "siteConfig.appSettings"
+                    // This is why WEBSITE_RUN_FROM_PACKAGE must stay at first position
+                    "siteConfig.appSettings[0].value"
                 } : new List<string>()
             }));
+
+        static string GetSecretUri(ImmutableDictionary<string, string>? secretUris, string outputName) => 
+            !(secretUris is null) && secretUris.TryGetValue(outputName, out var value) ?
+            value :
+            string.Empty;
 
         static Output<string> GetStorageConnectionString(ResourceGroup resourceGroup, StorageAccount mainStorage)
         {
