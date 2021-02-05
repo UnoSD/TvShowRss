@@ -182,7 +182,8 @@ namespace TvShowRss
                     GetAccountBlobContainerSAS.InvokeAsync(new GetAccountBlobContainerSASArgs
                     {
                         Start = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture),
-                        Expiry = DateTime.UtcNow.AddMinutes(10).ToString("O", CultureInfo.InvariantCulture),
+                        Expiry = DateTime.UtcNow.AddYears(1).ToString("O", CultureInfo.InvariantCulture),
+                        // Find an alternative that works for good, don't want to update the token every year
                         ContainerName = tuple.Item1,
                         HttpsOnly = true,
                         ConnectionString = tuple.Item2,
