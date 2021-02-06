@@ -441,25 +441,10 @@ namespace TvShowRss
                            ServerFarmId       = appServicePlanId.Apply(x => x.Replace("serverFarms", "serverfarms")),
                            SiteConfig = new SiteConfigArgs
                            {
-                               //
                                LinuxFxVersion = "dotnet|3.1",
-                               AppSettings = new Dictionary<string, Input<string>>
-                                   {
-                                       // WEBSITE_RUN_FROM_PACKAGE must stay on top to be ignored if MD5 unchanged
-                                       ["WEBSITE_RUN_FROM_PACKAGE"] = appPackageBlobUrl,
-
-                                       ["FUNCTIONS_WORKER_RUNTIME"]       = "dotnet",
-                                       ["FUNCTION_APP_EDIT_MODE"]         = "readwrite",
-                                       ["APPINSIGHTS_INSTRUMENTATIONKEY"] = appInsights.InstrumentationKey,
-                                       ["AzureWebJobsStorage"]            = getKeyVaultReference(TableConnectionStringSecretOutputName),
-                                       ["TableConnectionString"]          = getKeyVaultReference(TableConnectionStringSecretOutputName),
-                                       ["TraktClientId"]                  = getKeyVaultReference(TraktIdSecretOutputName),
-                                       ["TraktClientSecret"]              = getKeyVaultReference(TraktSecretSecretOutputName),
-                                       ["TmdbApiKey"]                     = getKeyVaultReference(TmdbApiKeySecretOutputName),
-                                       ["CheckDays"]                      = "5",
-                                       ["FUNCTIONS_EXTENSION_VERSION"]    = "~3"
-                                   }.Select(kvp => new NameValuePairArgs {Name = kvp.Key, Value = kvp.Value})
-                                    .ToList()
+                               AppSettings = AppSettings(appInsights, appPackageBlobUrl, getKeyVaultReference)
+                                            .Select(kvp => new NameValuePairArgs {Name = kvp.Key, Value = kvp.Value})
+                                            .ToList()
                            }
                        },
                        new CustomResourceOptions
@@ -472,6 +457,27 @@ namespace TvShowRss
                                } :
                                new List<string>()
                        });
+
+        static Dictionary<string, Input<string>> AppSettings(
+            Component appInsights,
+            Output<string> appPackageBlobUrl,
+            Func<string, string> getKeyVaultReference) =>
+            new Dictionary<string, Input<string>>
+            {
+                // WEBSITE_RUN_FROM_PACKAGE must stay on top to be ignored if MD5 unchanged
+                ["WEBSITE_RUN_FROM_PACKAGE"] = appPackageBlobUrl,
+
+                ["FUNCTIONS_WORKER_RUNTIME"]       = "dotnet",
+                ["FUNCTION_APP_EDIT_MODE"]         = "readwrite",
+                ["APPINSIGHTS_INSTRUMENTATIONKEY"] = appInsights.InstrumentationKey,
+                ["AzureWebJobsStorage"]            = getKeyVaultReference(TableConnectionStringSecretOutputName),
+                ["TableConnectionString"]          = getKeyVaultReference(TableConnectionStringSecretOutputName),
+                ["TraktClientId"]                  = getKeyVaultReference(TraktIdSecretOutputName),
+                ["TraktClientSecret"]              = getKeyVaultReference(TraktSecretSecretOutputName),
+                ["TmdbApiKey"]                     = getKeyVaultReference(TmdbApiKeySecretOutputName),
+                ["CheckDays"]                      = "5",
+                ["FUNCTIONS_EXTENSION_VERSION"]    = "~3"
+            };
 
         static string GetSecretUri(ImmutableDictionary<string, string>? secretUris, string outputName) =>
             !(secretUris is null) && secretUris.TryGetValue(outputName, out var value) ? value : string.Empty;
