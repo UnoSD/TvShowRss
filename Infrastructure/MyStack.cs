@@ -87,6 +87,9 @@ namespace TvShowRss
             // Could also use the Git commit, but won't work during dev
             var appSourceMd5 = GetAppSourceMd5(AppPath);
 
+            string KeyVaultReference(string secretName) =>
+                    $"@Microsoft.KeyVault(SecretUri={GetSecretUri(secretUris, secretName)})";
+            
             var functionApp =
                     FunctionApp(config,
                                 resourcesPrefix,
@@ -96,7 +99,7 @@ namespace TvShowRss
                                 appInsights,
                                 blobUrl,
                                 appSourceMd5 == previousMd5,
-                                secretUris);
+                                KeyVaultReference);
 
             // Workaround for a Pulumi issue that forgets the function identity
             var savedIdentity = stack.GetValueAsync(nameof(FunctionIdentity)).Result?.ToString();
@@ -171,7 +174,6 @@ namespace TvShowRss
         // ReSharper disable MemberCanBePrivate.Global
         [Output] public Output<ImmutableDictionary<string, string>> SecretsUris { get; set; }
         [Output] public Output<string> ApplicationMd5 { get; set; }
-
         [Output] public Output<string> FunctionIdentity { get; set; }
         // ReSharper restore UnusedAutoPropertyAccessor.Global
         // ReSharper restore MemberCanBePrivate.Global
@@ -388,7 +390,7 @@ namespace TvShowRss
             Component appInsights,
             Output<string> appPackageBlobUrl,
             bool md5Unchanged,
-            ImmutableDictionary<string, string>? secretsUris) =>
+            Func<string, string> getKeyVaultReference) =>
                 new WebApp("functionApp", new WebAppArgs
                 {
                     ClientAffinityEnabled      = false,
@@ -435,23 +437,18 @@ namespace TvShowRss
                         AppSettings = new Dictionary<string, Input<string>>
                                 {
                                     // WEBSITE_RUN_FROM_PACKAGE must stay on top to be ignored if MD5 unchanged
-                                    ["WEBSITE_RUN_FROM_PACKAGE"] = appPackageBlobUrl,
+                                    ["WEBSITE_RUN_FROM_PACKAGE"]       = appPackageBlobUrl,
 
                                     ["FUNCTIONS_WORKER_RUNTIME"]       = "dotnet",
                                     ["FUNCTION_APP_EDIT_MODE"]         = "readwrite",
                                     ["APPINSIGHTS_INSTRUMENTATIONKEY"] = appInsights.InstrumentationKey,
-                                    ["AzureWebJobsStorage"] =
-                                            $"@Microsoft.KeyVault(SecretUri={GetSecretUri(secretsUris, TableConnectionStringSecretOutputName)})",
-                                    ["TableConnectionString"] =
-                                            $"@Microsoft.KeyVault(SecretUri={GetSecretUri(secretsUris, TableConnectionStringSecretOutputName)})",
-                                    ["TraktClientId"] =
-                                            $"@Microsoft.KeyVault(SecretUri={GetSecretUri(secretsUris, TraktIdSecretOutputName)})",
-                                    ["TraktClientSecret"] =
-                                            $"@Microsoft.KeyVault(SecretUri={GetSecretUri(secretsUris, TraktSecretSecretOutputName)})",
-                                    ["TmdbApiKey"] =
-                                            $"@Microsoft.KeyVault(SecretUri={GetSecretUri(secretsUris, TmdbApiKeySecretOutputName)})",
-                                    ["CheckDays"]                   = "5",
-                                    ["FUNCTIONS_EXTENSION_VERSION"] = "~3"
+                                    ["AzureWebJobsStorage"]            = getKeyVaultReference(TableConnectionStringSecretOutputName),
+                                    ["TableConnectionString"]          = getKeyVaultReference(TableConnectionStringSecretOutputName),
+                                    ["TraktClientId"]                  = getKeyVaultReference(TraktIdSecretOutputName),
+                                    ["TraktClientSecret"]              = getKeyVaultReference(TraktSecretSecretOutputName),
+                                    ["TmdbApiKey"]                     = getKeyVaultReference(TmdbApiKeySecretOutputName),
+                                    ["CheckDays"]                      = "5",
+                                    ["FUNCTIONS_EXTENSION_VERSION"]    = "~3"
                                 }.Select(kvp => new NameValuePairArgs {Name = kvp.Key, Value = kvp.Value})
                                  .ToList()
                     }
