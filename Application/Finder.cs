@@ -9,13 +9,12 @@ using TraktNet.Objects.Get.Episodes;
 using TraktNet.Objects.Get.Seasons;
 using static TvShowRss.Storage;
 using static TvShowRss.TraktClientFactory;
-using static TvShowRss.ConfigKeys;
 
 namespace TvShowRss
 {
     static class Finder
     {
-        internal static async Task<IEnumerable<Episode>> FindLatestEpisodeByDateAsync(DateTime fromDate, string dbFile)
+        internal static async Task<IEnumerable<Episode>> FindLatestEpisodeByDateAsync(DateTime fromDate, string dbFile, string tmdbApiKey)
         {
             var seasons = 
                 await GetAll<Series>(dbFile, s => s.PartitionKey == "Series" && 
@@ -33,13 +32,13 @@ namespace TvShowRss
                        {
                            var imageLinkAsync = 
                                s.tmdbId.HasValue && te.SeasonNumber.HasValue ?
-                               await GetImageLinkAsync(s.tmdbId.Value, te.SeasonNumber.Value, te.Number).ConfigureAwait(false) :
+                               await GetImageLinkAsync(tmdbApiKey, s.tmdbId.Value, te.SeasonNumber.Value, te.Number).ConfigureAwait(false) :
                                string.Empty;
 
                            var seasonImageLink = 
                                await seasonImageLinkCache.GetOrAdd($"{s.tmdbId}{te.SeasonNumber}", _ =>
                                         s.tmdbId.HasValue && te.SeasonNumber.HasValue ?
-                                        GetImageLinkAsync(s.tmdbId.Value, te.SeasonNumber.Value) :
+                                        GetImageLinkAsync(tmdbApiKey, s.tmdbId.Value, te.SeasonNumber.Value) :
                                         Task.FromResult(string.Empty))
                                    .ConfigureAwait(false);
                            
@@ -60,14 +59,14 @@ namespace TvShowRss
 
         static readonly Lazy<HttpClient> HttpClient = new Lazy<HttpClient>();
 
-        static string TmdbApiUrl(uint tmdbId, int season, int? episode) => 
+        static string TmdbApiUrl(string tmdbApiKey, uint tmdbId, int season, int? episode) => 
             $"https://api.themoviedb.org/3/tv/{tmdbId}/season/{season}" +
             (episode.HasValue ? $"/episode/{episode.Value}" : "") +
-            $"?api_key={Config.GetValue(TmdbApiKey)}";
+            $"?api_key={tmdbApiKey}";
 
-        static Task<string> GetTmdbDataAsync(uint tmdbId, int season, int? episode) =>
+        static Task<string> GetTmdbDataAsync(string tmdbApiKey, uint tmdbId, int season, int? episode) =>
             HttpClient.Value
-                      .GetAsync(TmdbApiUrl(tmdbId, season, episode))
+                      .GetAsync(TmdbApiUrl(tmdbApiKey, tmdbId, season, episode))
                       .Bind(r => r.IsSuccessStatusCode ?
                                  r.Content.ReadAsStringAsync() :
                                  Task.FromResult(string.Empty));
@@ -84,8 +83,8 @@ namespace TvShowRss
             }
         }
         
-        static Task<string> GetImageLinkAsync(uint tmdbId, int season, int? episode = null) =>
-            GetTmdbDataAsync(tmdbId, season, episode)
+        static Task<string> GetImageLinkAsync(string tmdbApiKey, uint tmdbId, int season, int? episode = null) =>
+            GetTmdbDataAsync(tmdbApiKey, tmdbId, season, episode)
                 .Map(TryParseJson)
                 .Map(j => j[episode.HasValue ? 
                             "still_path" :
