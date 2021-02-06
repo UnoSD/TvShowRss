@@ -196,7 +196,8 @@ namespace TvShowRss
                                          {
                                              Read = true
                                          }
-                                     })).Apply(x => appPackageUrl.Apply(url => url + x.Sas));
+                                     }))
+                      .Apply(x => appPackageUrl.Apply(url => url + x.Sas));
 
         static Blob AppPackage(StorageAccount mainStorage, BlobContainer deploymentsCntainer)
         {
@@ -335,9 +336,10 @@ namespace TvShowRss
                                       new AccessPolicyEntryArgs
                                       {
                                           ObjectId =
-                                                  functionApp.Identity.Apply(x => x?.PrincipalId ?? savedIdentity ??
-                                                                                     //throw new Exception("Missing function identity")),
-                                                                                     "Missing function identity, file a bug in Pulumi"),
+                                                  functionApp.Identity.Apply(x => x?.PrincipalId ??
+                                                                                  savedIdentity ??
+                                                                                  //throw new Exception("Missing function identity")),
+                                                                                  "Missing function identity, file a bug in Pulumi"),
                                           Permissions = new PermissionsArgs
                                           {
                                               Secrets =
@@ -429,7 +431,7 @@ namespace TvShowRss
                     ServerFarmId       = appServicePlanId.Apply(x => x.Replace("serverFarms", "serverfarms")),
                     SiteConfig = new SiteConfigArgs
                     {
-                        LinuxFxVersion = "DOTNETCORE|3.1",
+                        LinuxFxVersion = "dotnet|3.1",
                         AppSettings = new Dictionary<string, Input<string>>
                                 {
                                     // WEBSITE_RUN_FROM_PACKAGE must stay on top to be ignored if MD5 unchanged
@@ -455,13 +457,13 @@ namespace TvShowRss
                     }
                 }, new CustomResourceOptions
                 {
-                    IgnoreChanges = md5Unchanged
-                        ? new List<string>
-                        {
-                            // This is why WEBSITE_RUN_FROM_PACKAGE must stay at first position
-                            "siteConfig.appSettings[0].value"
-                        }
-                        : new List<string>()
+                    IgnoreChanges = md5Unchanged ?
+                                    new List<string>
+                                    {
+                                        // This is why WEBSITE_RUN_FROM_PACKAGE must stay at first position
+                                        "siteConfig.appSettings[0].value"
+                                    } :
+                                    new List<string>()
                 });
 
         static string GetSecretUri(ImmutableDictionary<string, string>? secretUris, string outputName) =>
