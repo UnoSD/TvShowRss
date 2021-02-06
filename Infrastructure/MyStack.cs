@@ -332,8 +332,8 @@ namespace TvShowRss
                             {
                                 ObjectId = 
                                     functionApp.Identity.Apply(x => x?.PrincipalId ?? savedIdentity ??
-                                                        throw new Exception("Missing function identity")),
-                                                        //""), 
+                                                        //throw new Exception("Missing function identity")),
+                                                        "Missing function identity, file a bug in Pulumi"), 
                                 Permissions = new PermissionsArgs
                                 {
                                     Secrets =
