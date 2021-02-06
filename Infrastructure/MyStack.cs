@@ -223,9 +223,8 @@ namespace TvShowRss
             });
         }
 
-        static Secret TmdbApiKeySecret(ResourceGroup resourceGroup, Vault appSecrets, Config config)
-        {
-            return new Secret("tmdbApiKeySecret", new SecretArgs
+        static Secret TmdbApiKeySecret(ResourceGroup resourceGroup, Vault appSecrets, Config config) =>
+            new Secret("tmdbApiKeySecret", new SecretArgs
             {
                 Properties = new SecretPropertiesArgs
                 {
@@ -240,12 +239,10 @@ namespace TvShowRss
                 SecretName = "TmdbApiKey",
                 VaultName = appSecrets.Name
             });
-        }
 
         static Secret TableConnectionStringSecret(ResourceGroup resourceGroup, Vault appSecrets,
-            Output<string> storageConnectionString)
-        {
-            return new Secret("tableConnectionString", new SecretArgs
+            Output<string> storageConnectionString) =>
+            new Secret("tableConnectionString", new SecretArgs
             {
                 Properties = new SecretPropertiesArgs
                 {
@@ -260,11 +257,9 @@ namespace TvShowRss
                 SecretName = "TableConnectionString",
                 VaultName = appSecrets.Name
             });
-        }
 
-        static Secret TraktSecretSecret(ResourceGroup resourceGroup, Vault appSecrets, Config config)
-        {
-            return new Secret("traktClientSecretSecret", new SecretArgs
+        static Secret TraktSecretSecret(ResourceGroup resourceGroup, Vault appSecrets, Config config) =>
+            new Secret("traktClientSecretSecret", new SecretArgs
             {
                 Properties = new SecretPropertiesArgs
                 {
@@ -279,11 +274,9 @@ namespace TvShowRss
                 SecretName = "TraktClientSecret",
                 VaultName = appSecrets.Name
             });
-        }
 
-        static Secret TraktIdSecret(ResourceGroup resourceGroup, Vault appSecrets, Config config)
-        {
-            return new Secret("traktClientIdSecret", new SecretArgs
+        static Secret TraktIdSecret(ResourceGroup resourceGroup, Vault appSecrets, Config config) =>
+            new Secret("traktClientIdSecret", new SecretArgs
             {
                 Properties = new SecretPropertiesArgs
                 {
@@ -298,12 +291,10 @@ namespace TvShowRss
                 SecretName = "TraktClientId",
                 VaultName = appSecrets.Name
             });
-        }
 
         static Vault KeyVault(ResourceGroup resourceGroup, Config config, GetClientConfigResult azureConfig,
-            WebApp functionApp, string resourcesPrefix, string? savedIdentity)
-        {
-            return new Vault("appSecrets",
+            WebApp functionApp, string resourcesPrefix, string? savedIdentity) =>
+            new Vault("appSecrets",
                 new VaultArgs
                 {
                     Location = resourceGroup.Location,
@@ -332,8 +323,8 @@ namespace TvShowRss
                             {
                                 ObjectId = 
                                     functionApp.Identity.Apply(x => x?.PrincipalId ?? savedIdentity ??
-                                                        //throw new Exception("Missing function identity")),
-                                                        "Missing function identity, file a bug in Pulumi"), 
+                                        //throw new Exception("Missing function identity")),
+                                        "Missing function identity, file a bug in Pulumi"), 
                                 Permissions = new PermissionsArgs
                                 {
                                     Secrets =
@@ -361,11 +352,9 @@ namespace TvShowRss
                     ResourceGroupName = resourceGroup.Name,
                     VaultName = resourcesPrefix + "kv"
                 });
-        }
 
-        static BlobContainer BlobContainer(StorageAccount mainStorage, ResourceGroup resourceGroup)
-        {
-            return new BlobContainer("deploymentsContainer", new BlobContainerArgs
+        static BlobContainer BlobContainer(StorageAccount mainStorage, ResourceGroup resourceGroup) =>
+            new BlobContainer("deploymentsContainer", new BlobContainerArgs
             {
                 AccountName = mainStorage.Name,
                 ContainerName = "deployments",
@@ -374,7 +363,6 @@ namespace TvShowRss
                 PublicAccess = PublicAccess.None,
                 ResourceGroupName = resourceGroup.Name
             });
-        }
 
         static WebApp FunctionApp(Config config, string resourcesPrefix, string location,
             ResourceGroup resourceGroup,
@@ -454,22 +442,19 @@ namespace TvShowRss
             value :
             string.Empty;
 
-        static Output<string> GetStorageConnectionString(ResourceGroup resourceGroup, StorageAccount mainStorage)
-        {
-            return Output.Tuple(mainStorage.Name, resourceGroup.Name)
-                .Apply(async tuple => (result: await ListStorageAccountKeys.InvokeAsync(new ListStorageAccountKeysArgs
-                {
-                    AccountName = tuple.Item1,
-                    ResourceGroupName = tuple.Item2
-                }), accountName: tuple.Item1))
-                .Apply(tuple => $"DefaultEndpointsProtocol=https;AccountName={tuple.accountName};" +
-                                $"AccountKey={tuple.result.Keys.First().Value}")
-                .Apply(Output.CreateSecret);
-        }
+        static Output<string> GetStorageConnectionString(ResourceGroup resourceGroup, StorageAccount mainStorage) =>
+            Output.Tuple(mainStorage.Name, resourceGroup.Name)
+                  .Apply(async tuple => (result: await ListStorageAccountKeys.InvokeAsync(new ListStorageAccountKeysArgs
+                  {
+                      AccountName = tuple.Item1,
+                      ResourceGroupName = tuple.Item2
+                  }), accountName: tuple.Item1))
+                  .Apply(tuple => $"DefaultEndpointsProtocol=https;AccountName={tuple.accountName};" +
+                                  $"AccountKey={tuple.result.Keys.First().Value}")
+                  .Apply(Output.CreateSecret);
 
-        static AppServicePlan AppServicePlan(string location, ResourceGroup resourceGroup)
-        {
-            return new AppServicePlan("appServicePlan", new AppServicePlanArgs
+        static AppServicePlan AppServicePlan(string location, ResourceGroup resourceGroup) =>
+            new AppServicePlan("appServicePlan", new AppServicePlanArgs
             {
                 HyperV = false,
                 IsSpot = false,
@@ -492,11 +477,9 @@ namespace TvShowRss
                 TargetWorkerCount = 0,
                 TargetWorkerSizeId = 0
             });
-        }
 
-        static Component AppInsights(ResourceGroup resourceGroup, string resourcesPrefix)
-        {
-            return new Component("appInsights", new ComponentArgs
+        static Component AppInsights(ResourceGroup resourceGroup, string resourcesPrefix) =>
+            new Component("appInsights", new ComponentArgs
             {
                 ApplicationType = "web",
                 Kind = "web",
@@ -505,11 +488,9 @@ namespace TvShowRss
                 ResourceName = resourcesPrefix + "ai",
                 RetentionInDays = 90
             });
-        }
 
-        static StorageAccount MainStorage(string resourcesPrefix, ResourceGroup resourceGroup)
-        {
-            return new StorageAccount("mainStorage", new StorageAccountArgs
+        static StorageAccount MainStorage(string resourcesPrefix, ResourceGroup resourceGroup) =>
+            new StorageAccount("mainStorage", new StorageAccountArgs
             {
                 AccessTier = AccessTier.Hot,
                 AccountName = resourcesPrefix + "sa",
@@ -545,15 +526,12 @@ namespace TvShowRss
                     Name = "Standard_LRS"
                 }
             });
-        }
 
-        static ResourceGroup ResourceGroup(Config config, string location)
-        {
-            return new ResourceGroup("resourceGroup", new ResourceGroupArgs
+        static ResourceGroup ResourceGroup(Config config, string location) =>
+            new ResourceGroup("resourceGroup", new ResourceGroupArgs
             {
                 ResourceGroupName = config.Require("resourceGroup"),
                 Location = location.ToLower().Replace(" ", "")
             });
-        }
     }
 }
