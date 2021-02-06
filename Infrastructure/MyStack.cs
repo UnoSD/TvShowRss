@@ -436,6 +436,7 @@ namespace TvShowRss
                             ["TraktClientId"] = $"@Microsoft.KeyVault(SecretUri={GetSecretUri(secretsUris, TraktIdSecretOutputName)})",
                             ["TraktClientSecret"] = $"@Microsoft.KeyVault(SecretUri={GetSecretUri(secretsUris, TraktSecretSecretOutputName)})",
                             ["TmdbApiKey"] = $"@Microsoft.KeyVault(SecretUri={GetSecretUri(secretsUris, TmdbApiKeySecretOutputName)})",
+                            ["CheckDays"] = "5"
                         }.Select(kvp => new NameValuePairArgs {Name = kvp.Key, Value = kvp.Value})
                         .ToList()
                 }
@@ -462,7 +463,8 @@ namespace TvShowRss
                     ResourceGroupName = tuple.Item2
                 }), accountName: tuple.Item1))
                 .Apply(tuple => $"DefaultEndpointsProtocol=https;AccountName={tuple.accountName};" +
-                                $"AccountKey={tuple.result.Keys.First().Value}");
+                                $"AccountKey={tuple.result.Keys.First().Value}")
+                .Apply(Output.CreateSecret);
         }
 
         static AppServicePlan AppServicePlan(string location, ResourceGroup resourceGroup)
