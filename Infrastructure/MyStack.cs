@@ -69,7 +69,7 @@ namespace TvShowRss
 
             var appPackage = AppPackage(mainStorage, deploymentsContainer);
 
-            var appServicePlan = AppServicePlan(location, resourceGroup);
+            var appServicePlan = AppServicePlan(location, resourceGroup, config, resourcesPrefix);
 
             var storageConnectionString = GetStorageConnectionString(resourceGroup, mainStorage);
 
@@ -494,7 +494,11 @@ namespace TvShowRss
                                   $"AccountKey={tuple.result.Keys.First().Value}")
                   .Apply(Output.CreateSecret);
 
-        static AppServicePlan AppServicePlan(string location, ResourceGroup resourceGroup) =>
+        static AppServicePlan AppServicePlan(
+            string location,
+            ResourceGroup resourceGroup,
+            Config conf,
+            string resourcePrefix) =>
             new AppServicePlan("appServicePlan",
                                new AppServicePlanArgs
                                {
@@ -504,10 +508,12 @@ namespace TvShowRss
                                    Kind                      = "functionapp",
                                    Location                  = location,
                                    MaximumElasticWorkerCount = 1,
-                                   Name                      = "WestEuropeLinuxDynamicPlan",
-                                   PerSiteScaling            = false,
-                                   Reserved                  = true,
-                                   ResourceGroupName         = resourceGroup.Name,
+                                   Name = GetResourceName(conf,
+                                                          resourcePrefix + "asp",
+                                                          "appServicePlan"),
+                                   PerSiteScaling    = false,
+                                   Reserved          = true,
+                                   ResourceGroupName = resourceGroup.Name,
                                    Sku = new SkuDescriptionArgs
                                    {
                                        Capacity = 0,
@@ -519,6 +525,18 @@ namespace TvShowRss
                                    TargetWorkerCount  = 0,
                                    TargetWorkerSizeId = 0
                                });
+
+        static string GetResourceName(Config config, string defaultName, string pulumiName)
+        {
+            var nameOverrides =
+                config.GetObject<ImmutableDictionary<string, string>>("nameOverride");
+
+            return nameOverrides is null ?
+                defaultName :
+                nameOverrides.TryGetValue(pulumiName, out var value) ?
+                    value :
+                    defaultName;
+        }
 
         static Component AppInsights(ResourceGroup resourceGroup, string resourcesPrefix) =>
             new Component("appInsights",
