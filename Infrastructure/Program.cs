@@ -121,23 +121,19 @@ namespace TvShowRss
 
             var tmdbApiKeySecret = TmdbApiKeySecret(resourceGroup, appSecrets, config);
 
+            static Output<KeyValuePair<string, string>> ToKvp(Secret secret, string key) =>
+                secret.Properties.Apply(spr => KeyValuePair.Create(key, spr.SecretUriWithVersion));
+
             return new Dictionary<string, object?>
             {
                 [ApplicationMd5]   = Output.Create(appSourceMd5),
                 [FunctionIdentity] = functionApp.Identity.Apply(x => x?.PrincipalId ?? savedIdentity ?? string.Empty),
-
                 [SecretsUris] =
-                    Output.Tuple(traktIdSecret.Properties,
-                                 traktSecretSecret.Properties,
-                                 tableConnectionStringSecret.Properties,
-                                 tmdbApiKeySecret.Properties)
-                          .Apply(tuple => new Dictionary<string, string>
-                           {
-                               [TraktIdSecretOutputName]               = tuple.Item1.SecretUriWithVersion,
-                               [TraktSecretSecretOutputName]           = tuple.Item2.SecretUriWithVersion,
-                               [TableConnectionStringSecretOutputName] = tuple.Item3.SecretUriWithVersion,
-                               [TmdbApiKeySecretOutputName]            = tuple.Item4.SecretUriWithVersion,
-                           }.ToImmutableDictionary())
+                    Output.All(ToKvp(traktIdSecret, TraktIdSecretOutputName),
+                               ToKvp(traktSecretSecret, TraktSecretSecretOutputName),
+                               ToKvp(tableConnectionStringSecret, TableConnectionStringSecretOutputName),
+                               ToKvp(tmdbApiKeySecret, TmdbApiKeySecretOutputName))
+                          .Apply(kvps => new Dictionary<string, string>(kvps).ToImmutableDictionary())
             };
         });
 
@@ -147,7 +143,7 @@ namespace TvShowRss
         static void WaitForDebuggerIfRequested()
         {
             var waitForDebugger = new Config().GetBoolean("waitForDebugger") ?? false;
-            
+
             while (waitForDebugger && !Debugger.IsAttached)
                 System.Threading.Thread.Sleep(500);
         }
