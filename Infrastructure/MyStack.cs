@@ -491,8 +491,11 @@ namespace TvShowRss
                                  ResourceGroupName = tuple.Item2
                              }), accountName: tuple.Item1))
                   .Apply(tuple => $"DefaultEndpointsProtocol=https;AccountName={tuple.accountName};" +
-                                  $"AccountKey={tuple.result.Keys.First().Value}")
-                  .Apply(Output.CreateSecret);
+                                  $"AccountKey={tuple.result.Keys.First().Value}");
+                  // When added, this causes the appSettings of the function app to turn secret and that
+                  // somehow breaks the update when ignoring the changes to the WEBSITE_RUN_FROM_PACKAGE
+                  // File an issue on pulumi-azure-nextgen on GitHub
+                  //.Apply(Output.CreateSecret);
 
         static AppServicePlan AppServicePlan(
             string location,
