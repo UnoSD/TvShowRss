@@ -10,7 +10,7 @@ namespace TvShowRss
 {
     public static class AddShow
     {
-        [FunctionName("AddShow")]
+        [FunctionName(nameof(AddShow))]
         public static Task<IActionResult> Run
         (
             [HttpTrigger(AuthorizationLevel.Function, "post")]

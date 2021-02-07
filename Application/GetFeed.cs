@@ -12,7 +12,7 @@ namespace TvShowRss
     {
         static readonly DateTime FromDate = DateTime.Now.AddDays(-1 * Config.GetInt(CheckDays));
 
-        [FunctionName("GetFeed")]
+        [FunctionName(nameof(GetFeed))]
         public static Task<IActionResult> Run
         (
             [HttpTrigger(AuthorizationLevel.Function, "get")]

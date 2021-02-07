@@ -7,9 +7,11 @@ using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using Pulumi;
+using Pulumi.Azure.AppService;
 using Pulumi.Azure.Storage;
 using Pulumi.Azure.Storage.Inputs;
 using Pulumi.AzureNextGen.Authorization.Latest;
@@ -40,6 +42,8 @@ namespace TvShowRss
 
         // This stack needs to be deployed twice, the second time, it will set the Key Vault
         // secret URIs in the app settings.
+
+        // Debug show REST API calls: pulumi up -v=9 --logtostderr --logflow --debug
 
         [SuppressMessage("ReSharper", "ObjectCreationAsStatement")]
         static Task<int> Main() => Deployment.RunAsync(async () =>
@@ -133,16 +137,38 @@ namespace TvShowRss
                                ToKvp(traktSecretSecret, TraktSecretSecretOutputName),
                                ToKvp(tableConnectionStringSecret, TableConnectionStringSecretOutputName),
                                ToKvp(tmdbApiKeySecret, TmdbApiKeySecretOutputName))
-                          .Apply(kvps => new Dictionary<string, string>(kvps).ToImmutableDictionary())
+                          .Apply(kvps => new Dictionary<string, string>(kvps).ToImmutableDictionary()),
+                ["FunctionTestResult"]  = TestFunctionInvocation(functionApp),
+                ["FunctionOutboundIPs"] = functionApp.OutboundIpAddresses
             };
         });
 
+        static Output<string> TestFunctionInvocation(WebApp functionApp) =>
+            Output
+               .Format($"https://{functionApp.DefaultHostName}/api/{GetFeedFunctionName}?code={GetDefaultHostKey(functionApp)}")
+               .Apply(url => new HttpClient().GetAsync(url))
+               .Apply(async response => response.IsSuccessStatusCode ?
+                          "Successful" :
+                          $"Failed with: {response.StatusCode} {await response.Content.ReadAsStringAsync()}");
+
+        static Output<string> GetDefaultHostKey(WebApp functionApp) =>
+            Output.Tuple(functionApp.Name, functionApp.ResourceGroup)
+                  .Apply(tuple => GetFunctionAppHostKeys.InvokeAsync(new GetFunctionAppHostKeysArgs
+                   {
+                       Name              = tuple.Item1,
+                       ResourceGroupName = tuple.Item2
+                   }))
+                  .Apply(r => r.DefaultFunctionKey);
+
         /// <summary>
-        /// Enable with: pulumi &lt;up/preview&gt; -c waitForDebugger=true
+        /// Enable with: pulumi &lt;up/preview&gt; -c waitForDebugger=true; sed -i 's/^  debug:waitForDebugger: "true"$//' Pulumi.&lt;stackname&gt;.yaml
         /// </summary>
         static void WaitForDebuggerIfRequested()
         {
-            var waitForDebugger = new Config().GetBoolean("waitForDebugger") ?? false;
+            var waitForDebugger = new Config("debug").GetBoolean("waitForDebugger") ?? false;
+
+            if (waitForDebugger)
+                Log.Warn($"PID: {Process.GetCurrentProcess().Id} Waiting for .NET debugger to be attached...");
 
             while (waitForDebugger && !Debugger.IsAttached)
                 System.Threading.Thread.Sleep(500);
@@ -182,6 +208,7 @@ namespace TvShowRss
         const string SecretsUris = nameof(SecretsUris);
         const string ApplicationMd5 = nameof(ApplicationMd5);
         const string FunctionIdentity = nameof(FunctionIdentity);
+        const string GetFeedFunctionName = "GetFeed";
 
         static Output<string> GetAppPackageBlobUrl(
             BlobContainer deploymentsContainer,
