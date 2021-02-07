@@ -128,6 +128,10 @@ namespace TvShowRss
             static Output<KeyValuePair<string, string>> ToKvp(Secret secret, string key) =>
                 secret.Properties.Apply(spr => KeyValuePair.Create(key, spr.SecretUriWithVersion));
 
+            var isSecondRun =
+                secretUris != null &&
+                secretUris.All(kvp => !string.IsNullOrWhiteSpace(kvp.Key));
+
             return new Dictionary<string, object?>
             {
                 [ApplicationMd5]   = Output.Create(appSourceMd5),
@@ -138,18 +142,20 @@ namespace TvShowRss
                                ToKvp(tableConnectionStringSecret, TableConnectionStringSecretOutputName),
                                ToKvp(tmdbApiKeySecret, TmdbApiKeySecretOutputName))
                           .Apply(kvps => new Dictionary<string, string>(kvps).ToImmutableDictionary()),
-                ["FunctionTestResult"]  = TestFunctionInvocation(functionApp),
+                ["FunctionTestResult"]  = TestFunctionInvocation(functionApp, isSecondRun),
                 ["FunctionOutboundIPs"] = functionApp.OutboundIpAddresses
             };
         });
 
-        static Output<string> TestFunctionInvocation(WebApp functionApp) =>
-            Output
-               .Format($"https://{functionApp.DefaultHostName}/api/{GetFeedFunctionName}?code={GetDefaultHostKey(functionApp)}")
-               .Apply(url => new HttpClient().GetAsync(url))
-               .Apply(async response => response.IsSuccessStatusCode ?
-                          "Successful" :
-                          $"Failed with: {response.StatusCode} {await response.Content.ReadAsStringAsync()}");
+        static Output<string> TestFunctionInvocation(WebApp functionApp, bool isSecondRun) =>
+            isSecondRun ?
+                Output
+                   .Format($"https://{functionApp.DefaultHostName}/api/{GetFeedFunctionName}?code={GetDefaultHostKey(functionApp)}")
+                   .Apply(url => new HttpClient().GetAsync(url))
+                   .Apply(async response => response.IsSuccessStatusCode ?
+                              "Successful" :
+                              $"Failed with: {response.StatusCode} {await response.Content.ReadAsStringAsync()}") :
+                Output.Create("Run the deployment again to set app settings to correct Key Vault references");
 
         static Output<string> GetDefaultHostKey(WebApp functionApp) =>
             Output.Tuple(functionApp.Name, functionApp.ResourceGroup)
@@ -521,11 +527,8 @@ namespace TvShowRss
                                  ResourceGroupName = tuple.Item2
                              }), accountName: tuple.Item1))
                   .Apply(tuple => $"DefaultEndpointsProtocol=https;AccountName={tuple.accountName};" +
-                                  $"AccountKey={tuple.result.Keys.First().Value}");
-        // When added, this causes the appSettings of the function app to turn secret and that
-        // somehow breaks the update when ignoring the changes to the WEBSITE_RUN_FROM_PACKAGE
-        // File an issue on pulumi-azure-nextgen on GitHub
-        //.Apply(Output.CreateSecret);
+                                  $"AccountKey={tuple.result.Keys.First().Value}")
+                  .Apply(Output.CreateSecret);
 
         static AppServicePlan AppServicePlan(
             string location,
