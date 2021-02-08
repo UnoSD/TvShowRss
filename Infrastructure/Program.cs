@@ -25,6 +25,7 @@ using Pulumi.AzureNextGen.Web.Latest;
 using Pulumi.AzureNextGen.Web.Latest.Inputs;
 using Config = Pulumi.Config;
 using Deployment = Pulumi.Deployment;
+using ManagedServiceIdentityType = Pulumi.AzureNextGen.Web.Latest.ManagedServiceIdentityType;
 using SkuName = Pulumi.AzureNextGen.KeyVault.Latest.SkuName;
 using Table = Pulumi.AzureNextGen.Storage.Latest.Table;
 using TableArgs = Pulumi.AzureNextGen.Storage.Latest.TableArgs;
@@ -241,8 +242,7 @@ namespace TvShowRss
         static Blob AppPackage(StorageAccount mainStorage, BlobContainer deploymentsCntainer)
         {
             var startInfo =
-                new ProcessStartInfo(
-                                     "dotnet",
+                new ProcessStartInfo("dotnet",
                                      "publish -r linux-x64 -o ../Application/bin/publish ../Application/TvShowRss.csproj")
                 {
                     RedirectStandardOutput = true,
@@ -527,8 +527,11 @@ namespace TvShowRss
                                  ResourceGroupName = tuple.Item2
                              }), accountName: tuple.Item1))
                   .Apply(tuple => $"DefaultEndpointsProtocol=https;AccountName={tuple.accountName};" +
-                                  $"AccountKey={tuple.result.Keys.First().Value}")
-                  .Apply(Output.CreateSecret);
+                                  $"AccountKey={tuple.result.Keys.First().Value}");
+        // When added, this causes the appSettings of the function app to turn secret and that
+        // somehow breaks the update when ignoring the changes to the WEBSITE_RUN_FROM_PACKAGE
+        // File an issue on pulumi-azure-nextgen on GitHub
+        //.Apply(Output.CreateSecret);
 
         static AppServicePlan AppServicePlan(
             string location,
