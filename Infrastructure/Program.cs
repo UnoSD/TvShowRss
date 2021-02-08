@@ -286,8 +286,7 @@ namespace TvShowRss
                                {
                                    Enabled = true
                                },
-                               ContentType = "",
-                               Value       = value
+                               Value = value
                            },
                            ResourceGroupName = resourceGroup.Name,
                            SecretName        = $"{char.ToUpper(name[0])}{name.Substring(1)}",
