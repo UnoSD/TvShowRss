@@ -117,14 +117,14 @@ namespace TvShowRss
                                       resourcesPrefix,
                                       savedIdentity);
 
-            var traktIdSecret = TraktIdSecret(resourceGroup, appSecrets, config);
+            var traktIdSecret = SecretFromConfig(resourceGroup, appSecrets, config, "traktClientId");
 
-            var traktSecretSecret = TraktSecretSecret(resourceGroup, appSecrets, config);
+            var traktSecretSecret = SecretFromConfig(resourceGroup, appSecrets, config, "traktClientSecret");
 
             var tableConnectionStringSecret =
-                TableConnectionStringSecret(resourceGroup, appSecrets, storageConnectionString);
+                Secret(resourceGroup, appSecrets, storageConnectionString, "tableConnectionString");
 
-            var tmdbApiKeySecret = TmdbApiKeySecret(resourceGroup, appSecrets, config);
+            var tmdbApiKeySecret = SecretFromConfig(resourceGroup, appSecrets, config, "tmdbApiKey");
 
             static Output<KeyValuePair<string, string>> ToKvp(Secret secret, string key) =>
                 secret.Properties.Apply(spr => KeyValuePair.Create(key, spr.SecretUriWithVersion));
@@ -269,47 +269,15 @@ namespace TvShowRss
                             });
         }
 
-        static Secret TmdbApiKeySecret(ResourceGroup resourceGroup, Vault appSecrets, Config config) =>
-            new Secret("tmdbApiKeySecret",
-                       new SecretArgs
-                       {
-                           Properties = new SecretPropertiesArgs
-                           {
-                               Attributes = new SecretAttributesArgs
-                               {
-                                   Enabled = true
-                               },
-                               ContentType = "",
-                               Value       = config.RequireSecret("tmdbApiKey")
-                           },
-                           ResourceGroupName = resourceGroup.Name,
-                           SecretName        = "TmdbApiKey",
-                           VaultName         = appSecrets.Name
-                       });
-
-        static Secret TableConnectionStringSecret(
+        static Secret SecretFromConfig(
             ResourceGroup resourceGroup,
             Vault appSecrets,
-            Output<string> storageConnectionString) =>
-            new Secret("tableConnectionString",
-                       new SecretArgs
-                       {
-                           Properties = new SecretPropertiesArgs
-                           {
-                               Attributes = new SecretAttributesArgs
-                               {
-                                   Enabled = true
-                               },
-                               ContentType = "",
-                               Value       = storageConnectionString
-                           },
-                           ResourceGroupName = resourceGroup.Name,
-                           SecretName        = "TableConnectionString",
-                           VaultName         = appSecrets.Name
-                       });
+            Config config,
+            string configKey) =>
+            Secret(resourceGroup, appSecrets, config.RequireSecret(configKey), configKey);
 
-        static Secret TraktSecretSecret(ResourceGroup resourceGroup, Vault appSecrets, Config config) =>
-            new Secret("traktClientSecretSecret",
+        static Secret Secret(ResourceGroup resourceGroup, Vault appSecrets, Output<string> value, string name) =>
+            new Secret(name + "Secret",
                        new SecretArgs
                        {
                            Properties = new SecretPropertiesArgs
@@ -319,28 +287,10 @@ namespace TvShowRss
                                    Enabled = true
                                },
                                ContentType = "",
-                               Value       = config.RequireSecret("traktClientSecret")
+                               Value       = value
                            },
                            ResourceGroupName = resourceGroup.Name,
-                           SecretName        = "TraktClientSecret",
-                           VaultName         = appSecrets.Name
-                       });
-
-        static Secret TraktIdSecret(ResourceGroup resourceGroup, Vault appSecrets, Config config) =>
-            new Secret("traktClientIdSecret",
-                       new SecretArgs
-                       {
-                           Properties = new SecretPropertiesArgs
-                           {
-                               Attributes = new SecretAttributesArgs
-                               {
-                                   Enabled = true
-                               },
-                               ContentType = "",
-                               Value       = config.RequireSecret("traktClientId")
-                           },
-                           ResourceGroupName = resourceGroup.Name,
-                           SecretName        = "TraktClientId",
+                           SecretName        = $"{char.ToUpper(name[0])}{name.Substring(1)}",
                            VaultName         = appSecrets.Name
                        });
 
