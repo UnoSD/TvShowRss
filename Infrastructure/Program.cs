@@ -43,7 +43,6 @@ using GetClientConfigResult = Pulumi.AzureNextGen.Authorization.Latest.GetClient
 
 // Backlog
 // Add Git commit to the infrastructure tags to trace back to the deployed version
-// Change all "traktClientId" to use a constant and then build + secret etc...
 // Storage account network ACL to limit to function outbound IPs
 
 namespace TvShowRss
