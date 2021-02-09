@@ -44,16 +44,24 @@ using GetClientConfigResult = Pulumi.AzureNextGen.Authorization.Latest.GetClient
 // Backlog
 // Add Git commit to the infrastructure tags to trace back to the deployed version
 // Change all "traktClientId" to use a constant and then build + secret etc...
+// Storage account network ACL to limit to function outbound IPs
 
 namespace TvShowRss
 {
     [SuppressMessage("ReSharper", "ObjectCreationAsStatement")]
     static class Program
     {
-        const string TraktIdSecretOutputName = "TraktIdSecret";
-        const string TraktSecretSecretOutputName = "TraktSecretSecret";
-        const string TableConnectionStringSecretOutputName = "TableConnectionStringSecret";
-        const string TmdbApiKeySecretOutputName = "TmdbApiKeySecret";
+        const string TraktClientId = nameof(TraktClientId);
+        const string TraktClientSecret = nameof(TraktClientSecret);
+        const string TableConnectionString = nameof(TableConnectionString);
+        const string TmdbApiKey = nameof(TmdbApiKey);
+        const string AppInsightKey = nameof(AppInsightKey);
+
+        const string TraktIdSecretOutputName = TraktClientId                       + "Secret";
+        const string TraktSecretSecretOutputName = TraktClientSecret               + "Secret";
+        const string TableConnectionStringSecretOutputName = TableConnectionString + "Secret";
+        const string TmdbApiKeySecretOutputName = TmdbApiKey                       + "Secret";
+        const string AppInsightKeySecretOutputName = AppInsightKey                 + "Secret";
 
         const string AppPath = "../Application/bin/publish";
 
@@ -108,7 +116,6 @@ namespace TvShowRss
                             location,
                             resourceGroup,
                             appServicePlan.Id,
-                            appInsights,
                             blobUrl,
                             appSourceMd5 == previousMd5,
                             key => GetKeyVaultReference(secretUris, key));
@@ -121,14 +128,18 @@ namespace TvShowRss
                                       await Stack.GetStringAsync(FunctionIdentity),
                                       await Stack.GetStringAsync(ApimIdentity));
 
-            var traktIdSecret = SecretFromConfig(resourceGroup, appSecrets, config, "traktClientId");
+            var traktIdSecret = SecretFromConfig(resourceGroup, appSecrets, config, TraktClientId.ToCamelCase());
 
-            var traktSecretSecret = SecretFromConfig(resourceGroup, appSecrets, config, "traktClientSecret");
+            var traktSecretSecret =
+                SecretFromConfig(resourceGroup, appSecrets, config, TraktClientSecret.ToCamelCase());
 
             var tableConnectionStringSecret =
-                Secret(resourceGroup, appSecrets, storageConnectionString, "tableConnectionString");
+                Secret(resourceGroup, appSecrets, storageConnectionString, TableConnectionString.ToCamelCase());
 
-            var tmdbApiKeySecret = SecretFromConfig(resourceGroup, appSecrets, config, "tmdbApiKey");
+            var tmdbApiKeySecret = SecretFromConfig(resourceGroup, appSecrets, config, TmdbApiKey.ToCamelCase());
+
+            var appInsightKeySecret =
+                Secret(resourceGroup, appSecrets, appInsights.InstrumentationKey, AppInsightKey.ToCamelCase());
 
             var defaultHostKey = GetDefaultHostKey(functionApp);
 
@@ -149,31 +160,41 @@ namespace TvShowRss
 
             var getFeed = CreateApiOperation(GetFeedFunctionName, api, resourceGroup, apiManagement, HttpMethod.Get);
 
-            CreateApiOperation(AddShowFunctionName, api, resourceGroup, apiManagement, HttpMethod.Post);
+            var addShow = CreateApiOperation(AddShowFunctionName, api, resourceGroup, apiManagement, HttpMethod.Post);
 
             var apimSubscription = ApimSubscription(resourceGroup, apiManagement, api);
-
-            var getFeedUrl = GetFeedUrl(apiManagement, api, getFeed, apimSubscription);
 
             var isSecondRun = GetIsSecondRun(secretUris);
 
             LogRunInstructions(isSecondRun);
 
+            var getFeedUrl = GetUrl(apiManagement, api, getFeed.UrlTemplate, apimSubscription);
+
             return new Dictionary<string, object?>
             {
-                [ApplicationMd5]   = Output.Create(appSourceMd5),
-                [FunctionIdentity] = GetFunctionIdentity(functionApp),
                 [SecretsUris] = GetSecretUris(traktIdSecret,
                                               traktSecretSecret,
                                               tableConnectionStringSecret,
-                                              tmdbApiKeySecret),
-                ["FunctionTestResult"]  = TestFunctionInvocation(functionApp, defaultHostKey, isSecondRun),
-                ["FunctionOutboundIPs"] = functionApp.OutboundIpAddresses,
+                                              tmdbApiKeySecret,
+                                              appInsightKeySecret),
+                [ApplicationMd5]        = Output.Create(appSourceMd5),
+                [FunctionIdentity]      = GetFunctionIdentity(functionApp),
                 [ApimIdentity]          = apiManagement.Identity.Apply(x => x?.PrincipalId),
-                ["URL"]                 = getFeedUrl,
-                ["ApimTestResult"]      = TestUrl(getFeedUrl, isSecondRun)
+                ["FunctionTestResult"]  = TestFunctionInvocation(functionApp, defaultHostKey, isSecondRun),
+                ["ApimTestResult"]      = TestUrl(getFeedUrl, isSecondRun),
+                ["FunctionOutboundIPs"] = functionApp.OutboundIpAddresses,
+                ["GetFeedURL"]          = getFeedUrl,
+                ["AddShowURL"]          = GetAddShowUrl(apiManagement, api, addShow, apimSubscription)
             };
         });
+
+        static Output<string> GetAddShowUrl(
+            ApiManagementService apiManagement,
+            Api api,
+            ApiOperation addShow,
+            Subscription apimSubscription) =>
+            GetUrl(apiManagement, api, addShow.UrlTemplate, apimSubscription)
+               .Apply(x => x + "&id=<Trakt TV show ID E.G. friends>");
 
         static Output<string> GetFunctionIdentity(WebApp functionApp) =>
             functionApp.Identity.Apply(async x => x?.PrincipalId ??
@@ -184,11 +205,13 @@ namespace TvShowRss
             Secret traktIdSecret,
             Secret traktSecretSecret,
             Secret tableConnectionStringSecret,
-            Secret tmdbApiKeySecret) =>
+            Secret tmdbApiKeySecret,
+            Secret appInsightKeySecret) =>
             Output.All(ToKvp(traktIdSecret, TraktIdSecretOutputName),
                        ToKvp(traktSecretSecret, TraktSecretSecretOutputName),
                        ToKvp(tableConnectionStringSecret, TableConnectionStringSecretOutputName),
-                       ToKvp(tmdbApiKeySecret, TmdbApiKeySecretOutputName))
+                       ToKvp(tmdbApiKeySecret, TmdbApiKeySecretOutputName),
+                       ToKvp(appInsightKeySecret, AppInsightKeySecretOutputName))
                   .Apply(kvps => new Dictionary<string, string>(kvps).ToImmutableDictionary());
 
         static void LogRunInstructions(bool isSecondRun)
@@ -203,12 +226,12 @@ namespace TvShowRss
             secretUris != null &&
             secretUris.All(kvp => !string.IsNullOrWhiteSpace(kvp.Key));
 
-        static Output<string> GetFeedUrl(
+        static Output<string> GetUrl(
             ApiManagementService apiManagement,
             Api api,
-            ApiOperation getFeed,
+            Output<string> urlTemplate,
             Subscription apimSubscription) =>
-            Output.Format($"{apiManagement.GatewayUrl}/{api.Path}{getFeed.UrlTemplate}?subscription-key={apimSubscription.PrimaryKey}");
+            Output.Format($"{apiManagement.GatewayUrl}/{api.Path}{urlTemplate}?subscription-key={apimSubscription.PrimaryKey}");
 
         static Output<KeyValuePair<string, string>> ToKvp(Secret secret, string key) =>
             secret.Properties.Apply(spr => KeyValuePair.Create(key, spr.SecretUriWithVersion));
@@ -312,7 +335,7 @@ namespace TvShowRss
             ResourceGroup resourceGroup,
             ApiManagementService apim,
             HttpMethod httpMethod) =>
-            new ApiOperation(CamelCase(operationName) + "Operation",
+            new ApiOperation(ToCamelCase(operationName) + "Operation",
                              new ApiOperationArgs
                              {
                                  ApiId             = api.Name,
@@ -324,7 +347,7 @@ namespace TvShowRss
                                  UrlTemplate       = "/" + operationName
                              });
 
-        static string CamelCase(string value) =>
+        static string ToCamelCase(this string value) =>
             $"{char.ToLower(value[0])}{value.Substring(1)}";
 
         static void AllOperationsPolicy(Api api, ApiManagementService apim, ResourceGroup resourceGroup, Backend be) =>
@@ -638,7 +661,6 @@ namespace TvShowRss
             string location,
             ResourceGroup resourceGroup,
             Output<string> appServicePlanId,
-            Component appInsights,
             Output<string> appPackageBlobUrl,
             bool md5Unchanged,
             Func<string, string> getKeyVaultReference) =>
@@ -646,44 +668,22 @@ namespace TvShowRss
                        new WebAppArgs
                        {
                            ClientAffinityEnabled = false,
-                           ContainerSize         = 1536,
-                           DailyMemoryTimeQuota  = 0,
-                           Enabled               = true,
-                           HostNameSslStates =
-                           {
-                               new HostNameSslStateArgs
-                               {
-                                   HostType = HostType.Standard,
-                                   Name     = resourcesPrefix + "fa.azurewebsites.net",
-                                   SslState = SslState.Disabled
-                               },
-                               new HostNameSslStateArgs
-                               {
-                                   HostType = HostType.Repository,
-                                   Name     = resourcesPrefix + "fa.scm.azurewebsites.net",
-                                   SslState = SslState.Disabled
-                               }
-                           },
-                           HostNamesDisabled = false,
-                           HttpsOnly         = true,
-                           HyperV            = false,
+                           HttpsOnly             = true,
                            Identity = new ManagedServiceIdentityArgs
                            {
                                Type = ManagedServiceIdentityType.SystemAssigned
                            },
-                           IsXenon            = false,
-                           Kind               = "functionapp,linux",
-                           Location           = location,
-                           Name               = resourcesPrefix + "fa",
-                           RedundancyMode     = RedundancyMode.None,
-                           Reserved           = true,
-                           ResourceGroupName  = resourceGroup.Name,
-                           ScmSiteAlsoStopped = false,
-                           ServerFarmId       = appServicePlanId.Apply(x => x.Replace("serverFarms", "serverfarms")),
+                           Kind              = "functionapp,linux",
+                           Location          = location,
+                           Name              = resourcesPrefix + "fa",
+                           RedundancyMode    = RedundancyMode.None,
+                           Reserved          = true,
+                           ResourceGroupName = resourceGroup.Name,
+                           ServerFarmId      = appServicePlanId.Apply(x => x.Replace("serverFarms", "serverfarms")),
                            SiteConfig = new SiteConfigArgs
                            {
                                LinuxFxVersion = "dotnet|3.1",
-                               AppSettings = AppSettings(appInsights, appPackageBlobUrl, getKeyVaultReference)
+                               AppSettings = AppSettings(appPackageBlobUrl, getKeyVaultReference)
                                             .Select(kvp => new NameValuePairArgs {Name = kvp.Key, Value = kvp.Value})
                                             .ToList()
                            }
@@ -700,7 +700,6 @@ namespace TvShowRss
                        });
 
         static Dictionary<string, Input<string>> AppSettings(
-            Component appInsights,
             Output<string> appPackageBlobUrl,
             Func<string, string> getKeyVaultReference) =>
             new Dictionary<string, Input<string>>
@@ -710,12 +709,12 @@ namespace TvShowRss
 
                 ["FUNCTIONS_WORKER_RUNTIME"]       = "dotnet",
                 ["FUNCTION_APP_EDIT_MODE"]         = "readwrite",
-                ["APPINSIGHTS_INSTRUMENTATIONKEY"] = appInsights.InstrumentationKey,
+                ["APPINSIGHTS_INSTRUMENTATIONKEY"] = getKeyVaultReference(AppInsightKeySecretOutputName),
                 ["AzureWebJobsStorage"]            = getKeyVaultReference(TableConnectionStringSecretOutputName),
-                ["TableConnectionString"]          = getKeyVaultReference(TableConnectionStringSecretOutputName),
-                ["TraktClientId"]                  = getKeyVaultReference(TraktIdSecretOutputName),
-                ["TraktClientSecret"]              = getKeyVaultReference(TraktSecretSecretOutputName),
-                ["TmdbApiKey"]                     = getKeyVaultReference(TmdbApiKeySecretOutputName),
+                [TableConnectionString]            = getKeyVaultReference(TableConnectionStringSecretOutputName),
+                [TraktClientId]                    = getKeyVaultReference(TraktIdSecretOutputName),
+                [TraktClientSecret]                = getKeyVaultReference(TraktSecretSecretOutputName),
+                [TmdbApiKey]                       = getKeyVaultReference(TmdbApiKeySecretOutputName),
                 ["CheckDays"]                      = "5",
                 ["FUNCTIONS_EXTENSION_VERSION"]    = "~3"
             };
