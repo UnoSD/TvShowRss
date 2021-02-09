@@ -25,6 +25,7 @@ using Pulumi.AzureNextGen.Storage.Latest;
 using Pulumi.AzureNextGen.Storage.Latest.Inputs;
 using Pulumi.AzureNextGen.Web.Latest;
 using Pulumi.AzureNextGen.Web.Latest.Inputs;
+using Action = System.Action;
 using ApiManagementServiceSkuPropertiesArgs =
     Pulumi.AzureNextGen.ApiManagement.Latest.Inputs.ApiManagementServiceSkuPropertiesArgs;
 using BackendCredentialsContractArgs = Pulumi.AzureNextGen.ApiManagement.Latest.Inputs.BackendCredentialsContractArgs;
@@ -139,7 +140,9 @@ namespace TvShowRss
 
             var tmdbApiKeySecret = SecretFromConfig(resourceGroup, appSecrets, config, "tmdbApiKey");
 
-            var functionKeySecret = Secret(resourceGroup, appSecrets, GetDefaultHostKey(functionApp), "FunctionKey");
+            var defaultHostKey = GetDefaultHostKey(functionApp);
+
+            var functionKeySecret = Secret(resourceGroup, appSecrets, defaultHostKey, "FunctionKey");
 
             var apiManagement = ApiManagement(resourcesPrefix, resourceGroup);
 
@@ -178,6 +181,11 @@ namespace TvShowRss
             var getFeedUrl =
                 Output.Format($"{apiManagement.GatewayUrl}/{api.Path}/{GetFeedFunctionName}?subscription-key={apimSubscription.PrimaryKey}");
 
+            if (isSecondRun)
+                Log.Info("Second run completed successfully, the stack is now ready");
+            else
+                Log.Warn("Due to circular dependencies, the stack is not ready, a second *pulumi up* is required after");
+
             return new Dictionary<string, object?>
             {
                 [ApplicationMd5]   = Output.Create(appSourceMd5),
@@ -188,7 +196,7 @@ namespace TvShowRss
                                ToKvp(tableConnectionStringSecret, TableConnectionStringSecretOutputName),
                                ToKvp(tmdbApiKeySecret, TmdbApiKeySecretOutputName))
                           .Apply(kvps => new Dictionary<string, string>(kvps).ToImmutableDictionary()),
-                ["FunctionTestResult"]  = TestFunctionInvocation(functionApp, isSecondRun),
+                ["FunctionTestResult"]  = TestFunctionInvocation(functionApp, defaultHostKey, isSecondRun),
                 ["FunctionOutboundIPs"] = functionApp.OutboundIpAddresses,
                 ["ApimIdentity"]        = apiManagement.Identity.Apply(x => x?.PrincipalId),
                 ["URL"]                 = getFeedUrl,
@@ -343,9 +351,9 @@ namespace TvShowRss
                                          }
                                      });
 
-        static Output<string> TestFunctionInvocation(WebApp functionApp, bool isSecondRun) =>
+        static Output<string> TestFunctionInvocation(WebApp functionApp, Output<string> key, bool isSecondRun) =>
             TestUrl(Output
-                       .Format($"https://{functionApp.DefaultHostName}/api/{GetFeedFunctionName}?code={GetDefaultHostKey(functionApp)}"),
+                       .Format($"https://{functionApp.DefaultHostName}/api/{GetFeedFunctionName}?code={key}"),
                     isSecondRun);
 
         static Output<string> TestUrl(Output<string> url, bool isSecondRun) =>
