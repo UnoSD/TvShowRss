@@ -57,12 +57,6 @@ namespace TvShowRss
         const string TmdbApiKey = nameof(TmdbApiKey);
         const string AppInsightKey = nameof(AppInsightKey);
 
-        const string TraktIdSecretOutputName = TraktClientId                       + "Secret";
-        const string TraktSecretSecretOutputName = TraktClientSecret               + "Secret";
-        const string TableConnectionStringSecretOutputName = TableConnectionString + "Secret";
-        const string TmdbApiKeySecretOutputName = TmdbApiKey                       + "Secret";
-        const string AppInsightKeySecretOutputName = AppInsightKey                 + "Secret";
-
         const string AppPath = "../Application/bin/publish";
 
         static readonly Lazy<StackReference> LazyStack =
@@ -174,11 +168,11 @@ namespace TvShowRss
             {
                 [SecretsUris] = new Dictionary<string, Output<string>>
                 {
-                    [TraktIdSecretOutputName]               = traktIdSecret.UriWithVersion(),
-                    [TraktSecretSecretOutputName]           = traktSecretSecret.UriWithVersion(),
-                    [TableConnectionStringSecretOutputName] = tableConnectionStringSecret.UriWithVersion(),
-                    [TmdbApiKeySecretOutputName]            = tmdbApiKeySecret.UriWithVersion(),
-                    [AppInsightKeySecretOutputName]         = appInsightKeySecret.UriWithVersion()
+                    [TraktClientId]         = traktIdSecret.UriWithVersion(),
+                    [TraktClientSecret]     = traktSecretSecret.UriWithVersion(),
+                    [TableConnectionString] = tableConnectionStringSecret.UriWithVersion(),
+                    [TmdbApiKey]            = tmdbApiKeySecret.UriWithVersion(),
+                    [AppInsightKey]         = appInsightKeySecret.UriWithVersion()
                 },
                 [ApplicationMd5]        = Output.Create(appSourceMd5),
                 [FunctionIdentity]      = GetFunctionIdentity(functionApp),
@@ -701,12 +695,12 @@ namespace TvShowRss
 
                 ["FUNCTIONS_WORKER_RUNTIME"]       = "dotnet",
                 ["FUNCTION_APP_EDIT_MODE"]         = "readwrite",
-                ["APPINSIGHTS_INSTRUMENTATIONKEY"] = getKeyVaultReference(AppInsightKeySecretOutputName),
-                ["AzureWebJobsStorage"]            = getKeyVaultReference(TableConnectionStringSecretOutputName),
-                [TableConnectionString]            = getKeyVaultReference(TableConnectionStringSecretOutputName),
-                [TraktClientId]                    = getKeyVaultReference(TraktIdSecretOutputName),
-                [TraktClientSecret]                = getKeyVaultReference(TraktSecretSecretOutputName),
-                [TmdbApiKey]                       = getKeyVaultReference(TmdbApiKeySecretOutputName),
+                ["APPINSIGHTS_INSTRUMENTATIONKEY"] = getKeyVaultReference(AppInsightKey),
+                ["AzureWebJobsStorage"]            = getKeyVaultReference(TableConnectionString),
+                [TableConnectionString]            = getKeyVaultReference(TableConnectionString),
+                [TraktClientId]                    = getKeyVaultReference(TraktClientId),
+                [TraktClientSecret]                = getKeyVaultReference(TraktClientSecret),
+                [TmdbApiKey]                       = getKeyVaultReference(TmdbApiKey),
                 ["CheckDays"]                      = "5",
                 ["FUNCTIONS_EXTENSION_VERSION"]    = "~3"
             };
@@ -786,7 +780,7 @@ namespace TvShowRss
                           });
 
         static StorageAccount CreateStorage(string resourcesPrefix, ResourceGroup resourceGroup) =>
-            new StorageAccount("mainStorage",
+            new StorageAccount("storageAccount",
                                new StorageAccountArgs
                                {
                                    AccessTier             = AccessTier.Hot,
