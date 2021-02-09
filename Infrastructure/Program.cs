@@ -14,7 +14,9 @@ using Pulumi;
 using Pulumi.Azure.AppService;
 using Pulumi.Azure.Storage;
 using Pulumi.Azure.Storage.Inputs;
-using Pulumi.AzureNextGen.Authorization.Latest;
+using Pulumi.AzureAD;
+using Pulumi.AzureNextGen.ApiManagement.Latest;
+using Pulumi.AzureNextGen.ApiManagement.V20200601Preview.Inputs;
 using Pulumi.AzureNextGen.Insights.Latest;
 using Pulumi.AzureNextGen.KeyVault.Latest;
 using Pulumi.AzureNextGen.KeyVault.Latest.Inputs;
@@ -23,15 +25,25 @@ using Pulumi.AzureNextGen.Storage.Latest;
 using Pulumi.AzureNextGen.Storage.Latest.Inputs;
 using Pulumi.AzureNextGen.Web.Latest;
 using Pulumi.AzureNextGen.Web.Latest.Inputs;
+using ApiManagementServiceSkuPropertiesArgs =
+    Pulumi.AzureNextGen.ApiManagement.Latest.Inputs.ApiManagementServiceSkuPropertiesArgs;
+using BackendCredentialsContractArgs = Pulumi.AzureNextGen.ApiManagement.Latest.Inputs.BackendCredentialsContractArgs;
 using Config = Pulumi.Config;
 using Deployment = Pulumi.Deployment;
 using ManagedServiceIdentityType = Pulumi.AzureNextGen.Web.Latest.ManagedServiceIdentityType;
 using SkuName = Pulumi.AzureNextGen.KeyVault.Latest.SkuName;
 using Table = Pulumi.AzureNextGen.Storage.Latest.Table;
 using TableArgs = Pulumi.AzureNextGen.Storage.Latest.TableArgs;
+using NamedValue = Pulumi.AzureNextGen.ApiManagement.V20200601Preview.NamedValue;
+using NamedValueArgs = Pulumi.AzureNextGen.ApiManagement.V20200601Preview.NamedValueArgs;
+using ApiManagementServiceIdentityArgs =
+    Pulumi.AzureNextGen.ApiManagement.Latest.Inputs.ApiManagementServiceIdentityArgs;
+using GetClientConfig = Pulumi.AzureNextGen.Authorization.Latest.GetClientConfig;
+using GetClientConfigResult = Pulumi.AzureNextGen.Authorization.Latest.GetClientConfigResult;
 
 namespace TvShowRss
 {
+    [SuppressMessage("ReSharper", "ObjectCreationAsStatement")]
     static class Program
     {
         const string TraktIdSecretOutputName = "TraktIdSecret";
@@ -115,7 +127,8 @@ namespace TvShowRss
                                       azureConfig,
                                       functionApp,
                                       resourcesPrefix,
-                                      savedIdentity);
+                                      savedIdentity,
+                                      (string?) await stack.GetValueAsync("ApimIdentity"));
 
             var traktIdSecret = SecretFromConfig(resourceGroup, appSecrets, config, "traktClientId");
 
@@ -126,12 +139,44 @@ namespace TvShowRss
 
             var tmdbApiKeySecret = SecretFromConfig(resourceGroup, appSecrets, config, "tmdbApiKey");
 
+            var functionKeySecret = Secret(resourceGroup, appSecrets, GetDefaultHostKey(functionApp), "FunctionKey");
+
+            var apiManagement = ApiManagement(resourcesPrefix, resourceGroup);
+
+            var apimIdentityClientId = GetMiApplicationId(apiManagement);
+
+            var faKeyNamedValue =
+                FaKeyNamedValue(apiManagement, resourceGroup, functionKeySecret, apimIdentityClientId);
+
+            var backend = FunctionAppApimBackend(functionApp, resourceGroup, apiManagement, faKeyNamedValue);
+
+            var api = ApimApi(apiManagement, resourceGroup);
+
+            AllOperationsPolicy(api, apiManagement, resourceGroup, backend);
+
+            CreateApiOperation(GetFeedFunctionName, api, resourceGroup, apiManagement, HttpMethod.Get);
+
+            CreateApiOperation(AddShowFunctionName, api, resourceGroup, apiManagement, HttpMethod.Post);
+
+            var apimSubscription = new Subscription("apimFunctionSubscription",
+                                                    new SubscriptionArgs
+                                                    {
+                                                        ResourceGroupName = resourceGroup.Name,
+                                                        ServiceName       = apiManagement.Name,
+                                                        Sid               = "tvshow",
+                                                        DisplayName       = "API tvshow subscription",
+                                                        Scope             = Output.Format($"/apis/{api.Name}")
+                                                    });
+
             static Output<KeyValuePair<string, string>> ToKvp(Secret secret, string key) =>
                 secret.Properties.Apply(spr => KeyValuePair.Create(key, spr.SecretUriWithVersion));
 
             var isSecondRun =
                 secretUris != null &&
                 secretUris.All(kvp => !string.IsNullOrWhiteSpace(kvp.Key));
+
+            var getFeedUrl =
+                Output.Format($"{apiManagement.GatewayUrl}/{api.Path}/{GetFeedFunctionName}?subscription-key={apimSubscription.PrimaryKey}");
 
             return new Dictionary<string, object?>
             {
@@ -144,15 +189,168 @@ namespace TvShowRss
                                ToKvp(tmdbApiKeySecret, TmdbApiKeySecretOutputName))
                           .Apply(kvps => new Dictionary<string, string>(kvps).ToImmutableDictionary()),
                 ["FunctionTestResult"]  = TestFunctionInvocation(functionApp, isSecondRun),
-                ["FunctionOutboundIPs"] = functionApp.OutboundIpAddresses
+                ["FunctionOutboundIPs"] = functionApp.OutboundIpAddresses,
+                ["ApimIdentity"]        = apiManagement.Identity.Apply(x => x?.PrincipalId),
+                ["URL"]                 = getFeedUrl,
+                ["ApimTestResult"]      = TestUrl(getFeedUrl, isSecondRun)
             };
         });
 
+        static Backend FunctionAppApimBackend(
+            WebApp functionApp,
+            ResourceGroup resourceGroup,
+            ApiManagementService apiManagement,
+            NamedValue faKeyNamedValue)
+        {
+            return new Backend("apiManagementFunctionBackend",
+                               new BackendArgs
+                               {
+                                   BackendId         = functionApp.Name,
+                                   ResourceGroupName = resourceGroup.Name,
+                                   ServiceName       = apiManagement.Name,
+                                   Protocol          = BackendProtocol.Http,
+                                   Url               = Output.Format($"https://{functionApp.DefaultHostName}/api"),
+                                   Credentials = new BackendCredentialsContractArgs
+                                   {
+                                       Header =
+                                           faKeyNamedValue.Name.Apply(n =>
+                                                                          new Dictionary<string,
+                                                                              ImmutableArray<string>>
+                                                                          {
+                                                                              ["x-functions-key"] =
+                                                                                  new[] {$"{{{{{n}}}}}"}
+                                                                                     .ToImmutableArray()
+                                                                          })
+                                   }
+                               });
+        }
+
+        static NamedValue FaKeyNamedValue(
+            ApiManagementService apiManagement,
+            ResourceGroup resourceGroup,
+            Secret functionKeySecret,
+            Output<string> apimIdentityClientId)
+        {
+            return new NamedValue("apiManagementNamedValueKeyVaultFunctionKey",
+                                  new NamedValueArgs
+                                  {
+                                      Secret            = true,
+                                      ServiceName       = apiManagement.Name,
+                                      ResourceGroupName = resourceGroup.Name,
+                                      DisplayName       = "FunctionKey",
+                                      NamedValueId      = "function-key",
+                                      KeyVault = new KeyVaultContractCreatePropertiesArgs
+                                      {
+                                          SecretIdentifier =
+                                              functionKeySecret.Properties
+                                                               .Apply(x => x.SecretUriWithVersion),
+                                          IdentityClientId = apimIdentityClientId
+                                      }
+                                  });
+        }
+
+        static Output<string> GetMiApplicationId(ApiManagementService apiManagement)
+        {
+            return apiManagement.Identity
+                                .Apply(x => x?.PrincipalId ?? throw new Exception("Missing APIM identity"))
+                                .Apply(x => GetServicePrincipal.InvokeAsync(new GetServicePrincipalArgs
+                                 {
+                                     ObjectId = x
+                                 }))
+                                .Apply(x => x.ApplicationId);
+        }
+
+        static void CreateApiOperation(
+            string operationName,
+            Api api,
+            ResourceGroup resourceGroup,
+            ApiManagementService apim,
+            HttpMethod httpMethod) =>
+            new ApiOperation(CamelCase(operationName) + "Operation",
+                             new ApiOperationArgs
+                             {
+                                 ApiId             = api.Name,
+                                 OperationId       = operationName,
+                                 ResourceGroupName = resourceGroup.Name,
+                                 ServiceName       = apim.Name,
+                                 DisplayName       = operationName,
+                                 Method            = httpMethod.Method,
+                                 UrlTemplate       = "/" + operationName
+                             });
+
+        static string CamelCase(string value) =>
+            $"{char.ToLower(value[0])}{value.Substring(1)}";
+
+        static void AllOperationsPolicy(Api api, ApiManagementService apim, ResourceGroup resourceGroup, Backend be) =>
+            new ApiPolicy("apiPolicy",
+                          new ApiPolicyArgs
+                          {
+                              ApiId             = api.Name,
+                              PolicyId          = "policy",
+                              ResourceGroupName = resourceGroup.Name,
+                              ServiceName       = apim.Name,
+                              Value = Output.Format($@"
+<policies>
+    <inbound>
+        <rate-limit calls=""8"" renewal-period=""300"" />
+        <set-backend-service id=""apim-generated-policy"" backend-id=""{be.Name}"" />
+        <base />
+    </inbound>
+    <backend>
+        <base />
+    </backend>
+    <outbound>
+        <base />
+    </outbound>
+    <on-error>
+        <base />
+    </on-error>
+</policies>"),
+                              Format = PolicyContentFormat.Rawxml
+                          });
+
+        static Api ApimApi(ApiManagementService apiManagement, ResourceGroup resourceGroup) =>
+            new Api("api",
+                    new ApiArgs
+                    {
+                        ServiceName       = apiManagement.Name,
+                        DisplayName       = "tvshowrss",
+                        ApiId             = "tvshowsrss",
+                        ResourceGroupName = resourceGroup.Name,
+                        Path              = "tvshowrss",
+                        Protocols         = new[] {Protocol.Https}
+                    });
+
+        static ApiManagementService ApiManagement(
+            string resourcesPrefix,
+            ResourceGroup resourceGroup) =>
+            new ApiManagementService("apiManagement",
+                                     new ApiManagementServiceArgs
+                                     {
+                                         ResourceGroupName = resourceGroup.Name,
+                                         Location          = resourceGroup.Location,
+                                         ServiceName       = resourcesPrefix + "apim",
+                                         PublisherEmail    = "unosd@apimanagement.unosd",
+                                         PublisherName     = "UnoSD",
+                                         Identity = new ApiManagementServiceIdentityArgs
+                                         {
+                                             Type = ApimIdentityType.SystemAssigned
+                                         },
+                                         Sku = new ApiManagementServiceSkuPropertiesArgs
+                                         {
+                                             Name     = SkuType.Consumption,
+                                             Capacity = 0
+                                         }
+                                     });
+
         static Output<string> TestFunctionInvocation(WebApp functionApp, bool isSecondRun) =>
+            TestUrl(Output
+                       .Format($"https://{functionApp.DefaultHostName}/api/{GetFeedFunctionName}?code={GetDefaultHostKey(functionApp)}"),
+                    isSecondRun);
+
+        static Output<string> TestUrl(Output<string> url, bool isSecondRun) =>
             isSecondRun ?
-                Output
-                   .Format($"https://{functionApp.DefaultHostName}/api/{GetFeedFunctionName}?code={GetDefaultHostKey(functionApp)}")
-                   .Apply(url => new HttpClient().GetAsync(url))
+                url.Apply(x => new HttpClient().GetAsync(x))
                    .Apply(async response => response.IsSuccessStatusCode ?
                               "Successful" :
                               $"Failed with: {response.StatusCode} {await response.Content.ReadAsStringAsync()}") :
@@ -216,6 +414,7 @@ namespace TvShowRss
         const string ApplicationMd5 = nameof(ApplicationMd5);
         const string FunctionIdentity = nameof(FunctionIdentity);
         const string GetFeedFunctionName = "GetFeed";
+        const string AddShowFunctionName = "AddShow";
 
         static Output<string> GetAppPackageBlobUrl(
             BlobContainer deploymentsContainer,
@@ -299,7 +498,8 @@ namespace TvShowRss
             GetClientConfigResult azureConfig,
             WebApp functionApp,
             string resourcesPrefix,
-            string? savedIdentity) =>
+            string? savedIdentity,
+            string? apimIdentity) =>
             new Vault("appSecrets",
                       new VaultArgs
                       {
@@ -309,42 +509,61 @@ namespace TvShowRss
                               EnableRbacAuthorization = false,
                               EnableSoftDelete        = false,
                               AccessPolicies =
-                              {
-                                  new AccessPolicyEntryArgs
-                                  {
-                                      ObjectId = config.GetSecret("keyVaultManagerObjectId") ??
-                                                 Output.Create(azureConfig.ObjectId),
-                                      Permissions = new PermissionsArgs
+                                  new[]
                                       {
-                                          Secrets =
+                                          new AccessPolicyEntryArgs
                                           {
-                                              "get",
-                                              "set",
-                                              "list",
-                                              "delete"
-                                          }
-                                      },
-                                      TenantId = azureConfig.TenantId
-                                  },
-                                  new AccessPolicyEntryArgs
-                                  {
-                                      ObjectId =
-                                          functionApp.Identity.Apply(x => x?.PrincipalId ??
-                                                                          savedIdentity ??
-                                                                          //throw new Exception("Missing function identity")),
-                                                                          "Missing function identity, file a bug in Pulumi"),
-                                      Permissions = new PermissionsArgs
-                                      {
-                                          Secrets =
+                                              ObjectId = config.GetSecret("keyVaultManagerObjectId") ??
+                                                         Output.Create(azureConfig.ObjectId),
+                                              Permissions = new PermissionsArgs
+                                              {
+                                                  Secrets =
+                                                  {
+                                                      "get",
+                                                      "set",
+                                                      "list",
+                                                      "delete"
+                                                  }
+                                              },
+                                              TenantId = azureConfig.TenantId
+                                          },
+                                          new AccessPolicyEntryArgs
                                           {
-                                              "get",
-                                              "set",
-                                              "list"
+                                              ObjectId =
+                                                  functionApp.Identity.Apply(x => x?.PrincipalId ??
+                                                                                  savedIdentity ??
+                                                                                  //throw new Exception("Missing function identity")),
+                                                                                  "Missing function identity, file a bug in Pulumi"),
+                                              Permissions = new PermissionsArgs
+                                              {
+                                                  Secrets =
+                                                  {
+                                                      "get",
+                                                      "set",
+                                                      "list"
+                                                  }
+                                              },
+                                              TenantId = azureConfig.TenantId
                                           }
-                                      },
-                                      TenantId = azureConfig.TenantId
-                                  }
-                              },
+                                      }.Concat(apimIdentity is null ?
+                                                   Array.Empty<AccessPolicyEntryArgs>() :
+                                                   new[]
+                                                   {
+                                                       new AccessPolicyEntryArgs
+                                                       {
+                                                           ObjectId = apimIdentity,
+                                                           Permissions = new PermissionsArgs
+                                                           {
+                                                               Secrets =
+                                                               {
+                                                                   "get",
+                                                                   "list"
+                                                               }
+                                                           },
+                                                           TenantId = azureConfig.TenantId
+                                                       }
+                                                   })
+                                       .ToList(),
                               EnabledForDeployment         = false,
                               EnabledForDiskEncryption     = false,
                               EnabledForTemplateDeployment = false,
