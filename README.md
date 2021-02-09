@@ -12,12 +12,12 @@ Clone the repository, create a `Pulumi.<stackname>.yaml` file in `Infrastructure
 
 ```yaml
 config:
-  azure:location: <Your preferred Azure location>
-  azure:resourceGroup: YourResourceGroup
-  azure:resourcesPrefix: yourresourceprefix
-  azure:tmdbApiKey: <register on TMDB and get an API key for thumbnails>
-  azure:traktClientId: <register on Trakt and get an API client ID>
-  azure:traktClientSecret: <register on Trakt and get an API client secret>
+  TvShowRss:location: <Your preferred Azure location>
+  TvShowRss:resourceGroup: YourResourceGroup
+  TvShowRss:resourcesPrefix: yourresourceprefix
+  TvShowRss:tmdbApiKey: <register on TMDB and get an API key for thumbnails>
+  TvShowRss:traktClientId: <register on Trakt and get an API client ID>
+  TvShowRss:traktClientSecret: <register on Trakt and get an API client secret>
 ```
 
 Run (making sure you are logged in Azure from the az CLI):

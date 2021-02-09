@@ -75,7 +75,7 @@ namespace TvShowRss
         {
             WaitForDebuggerIfRequested();
 
-            var config = new Config("azure");
+            var config = new Config();
             var resourcesPrefix = config.Require("resourcesPrefix");
             var location = config.Require("location");
             var azureConfig = await GetClientConfig.InvokeAsync();
