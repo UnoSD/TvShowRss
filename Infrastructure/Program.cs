@@ -41,6 +41,10 @@ using ApiManagementServiceIdentityArgs =
 using GetClientConfig = Pulumi.AzureNextGen.Authorization.Latest.GetClientConfig;
 using GetClientConfigResult = Pulumi.AzureNextGen.Authorization.Latest.GetClientConfigResult;
 
+// TODO:
+// Add Git commit to the infrastructure tags to trace back to the deployed version
+// Change all "traktClientId" to use a constant and then build + secret etc...
+
 namespace TvShowRss
 {
     [SuppressMessage("ReSharper", "ObjectCreationAsStatement")]
@@ -53,14 +57,18 @@ namespace TvShowRss
 
         const string AppPath = "../Application/bin/publish";
 
-        // This stack needs to be deployed twice, the second time, it will set the Key Vault
-        // secret URIs in the app settings.
+        static readonly Lazy<StackReference> LazyStack =
+            new Lazy<StackReference>(() => new StackReference(Deployment.Instance.StackName));
 
-        // Debug show REST API calls: pulumi up -v=9 --logtostderr --logflow --debug
+        static StackReference Stack => LazyStack.Value;
 
-        // Add Git commit to the infrastructure tags to trace back to the deployed version
+        const string SecretsUris = nameof(SecretsUris);
+        const string ApplicationMd5 = nameof(ApplicationMd5);
+        const string FunctionIdentity = nameof(FunctionIdentity);
+        const string ApimIdentity = nameof(ApimIdentity);
+        const string GetFeedFunctionName = "GetFeed";
+        const string AddShowFunctionName = "AddShow";
 
-        [SuppressMessage("ReSharper", "ObjectCreationAsStatement")]
         static Task<int> Main() => Deployment.RunAsync(async () =>
         {
             WaitForDebuggerIfRequested();
@@ -70,45 +78,30 @@ namespace TvShowRss
             var location = config.Require("location");
             var azureConfig = await GetClientConfig.InvokeAsync();
 
-            var resourceGroup = ResourceGroup(config, location);
+            var resourceGroup = CreateResourceGroup(config, location);
 
-            var mainStorage = MainStorage(resourcesPrefix, resourceGroup);
+            var storageAccount = CreateStorage(resourcesPrefix, resourceGroup);
 
-            new Table("storageSeriesTable",
-                      new TableArgs
-                      {
-                          ResourceGroupName = resourceGroup.Name,
-                          AccountName       = mainStorage.Name,
-                          TableName         = "series"
-                      });
+            CreateSeriesTable(resourceGroup, storageAccount);
 
-            var appInsights = AppInsights(resourceGroup, resourcesPrefix);
+            var appInsights = CreateAppInsights(resourceGroup, resourcesPrefix);
 
-            var deploymentsContainer = BlobContainer(mainStorage, resourceGroup);
+            var deploymentsContainer = CreateDeploymentsBlobContainer(storageAccount, resourceGroup);
 
-            var appPackage = AppPackage(mainStorage, deploymentsContainer);
+            var appPackage = CreateAppPackageBlob(storageAccount, deploymentsContainer);
 
-            var appServicePlan = AppServicePlan(location, resourceGroup, config, resourcesPrefix);
+            var appServicePlan = CreateAppServicePlan(location, resourceGroup, config, resourcesPrefix);
 
-            var storageConnectionString = GetStorageConnectionString(resourceGroup, mainStorage);
+            var storageConnectionString = GetStorageConnectionString(resourceGroup, storageAccount);
 
             var blobUrl = GetAppPackageBlobUrl(deploymentsContainer, appPackage.Url, storageConnectionString);
 
-            var stack =
-                new StackReference(Deployment.Instance.StackName);
-
-            var previousMd5 =
-                (string?) await stack.GetValueAsync(nameof(ApplicationMd5));
+            var previousMd5 = await Stack.GetStringAsync(nameof(ApplicationMd5));
 
             var secretUris =
-                ((ImmutableDictionary<string, object>?) await stack.GetValueAsync(nameof(SecretsUris)))?
-               .ToImmutableDictionary(kvp => kvp.Key, kvp => (string) kvp.Value);
+                (await Stack.GetAsync<ImmutableDictionary<string, object>>(nameof(SecretsUris)))?.CastValue<string>();
 
-            // Could also use the Git commit, but won't work during dev
             var appSourceMd5 = GetAppSourceMd5(AppPath);
-
-            string KeyVaultReference(string secretName) =>
-                $"@Microsoft.KeyVault(SecretUri={GetSecretUri(secretUris, secretName)})";
 
             var functionApp =
                 FunctionApp(config,
@@ -119,18 +112,16 @@ namespace TvShowRss
                             appInsights,
                             blobUrl,
                             appSourceMd5 == previousMd5,
-                            KeyVaultReference);
-
-            // Workaround for a Pulumi issue that forgets the function identity
-            var savedIdentity = (await stack.GetValueAsync(nameof(FunctionIdentity)))?.ToString();
+                            key => GetKeyVaultReference(secretUris, key));
 
             var appSecrets = KeyVault(resourceGroup,
                                       config,
                                       azureConfig,
                                       functionApp,
                                       resourcesPrefix,
-                                      savedIdentity,
-                                      (string?) await stack.GetValueAsync("ApimIdentity"));
+                                      // Workaround for a Pulumi issue that forgets the function identity
+                                      await Stack.GetStringAsync(FunctionIdentity),
+                                      await Stack.GetStringAsync(ApimIdentity));
 
             var traktIdSecret = SecretFromConfig(resourceGroup, appSecrets, config, "traktClientId");
 
@@ -158,118 +149,168 @@ namespace TvShowRss
 
             AllOperationsPolicy(api, apiManagement, resourceGroup, backend);
 
-            CreateApiOperation(GetFeedFunctionName, api, resourceGroup, apiManagement, HttpMethod.Get);
+            var getFeed = CreateApiOperation(GetFeedFunctionName, api, resourceGroup, apiManagement, HttpMethod.Get);
 
             CreateApiOperation(AddShowFunctionName, api, resourceGroup, apiManagement, HttpMethod.Post);
 
-            var apimSubscription = new Subscription("apimFunctionSubscription",
-                                                    new SubscriptionArgs
-                                                    {
-                                                        ResourceGroupName = resourceGroup.Name,
-                                                        ServiceName       = apiManagement.Name,
-                                                        Sid               = "tvshow",
-                                                        DisplayName       = "API tvshow subscription",
-                                                        Scope             = Output.Format($"/apis/{api.Name}")
-                                                    });
+            var apimSubscription = ApimSubscription(resourceGroup, apiManagement, api);
 
-            static Output<KeyValuePair<string, string>> ToKvp(Secret secret, string key) =>
-                secret.Properties.Apply(spr => KeyValuePair.Create(key, spr.SecretUriWithVersion));
+            var getFeedUrl = GetFeedUrl(apiManagement, api, getFeed, apimSubscription);
 
-            var isSecondRun =
-                secretUris != null &&
-                secretUris.All(kvp => !string.IsNullOrWhiteSpace(kvp.Key));
+            var isSecondRun = GetIsSecondRun(secretUris);
 
-            var getFeedUrl =
-                Output.Format($"{apiManagement.GatewayUrl}/{api.Path}/{GetFeedFunctionName}?subscription-key={apimSubscription.PrimaryKey}");
-
-            if (isSecondRun)
-                Log.Info("Second run completed successfully, the stack is now ready");
-            else
-                Log.Warn("Due to circular dependencies, the stack is not ready, a second *pulumi up* is required after");
+            LogRunInstructions(isSecondRun);
 
             return new Dictionary<string, object?>
             {
                 [ApplicationMd5]   = Output.Create(appSourceMd5),
-                [FunctionIdentity] = functionApp.Identity.Apply(x => x?.PrincipalId ?? savedIdentity ?? string.Empty),
-                [SecretsUris] =
-                    Output.All(ToKvp(traktIdSecret, TraktIdSecretOutputName),
-                               ToKvp(traktSecretSecret, TraktSecretSecretOutputName),
-                               ToKvp(tableConnectionStringSecret, TableConnectionStringSecretOutputName),
-                               ToKvp(tmdbApiKeySecret, TmdbApiKeySecretOutputName))
-                          .Apply(kvps => new Dictionary<string, string>(kvps).ToImmutableDictionary()),
+                [FunctionIdentity] = GetFunctionIdentity(functionApp),
+                [SecretsUris] = GetSecretUris(traktIdSecret,
+                                              traktSecretSecret,
+                                              tableConnectionStringSecret,
+                                              tmdbApiKeySecret),
                 ["FunctionTestResult"]  = TestFunctionInvocation(functionApp, defaultHostKey, isSecondRun),
                 ["FunctionOutboundIPs"] = functionApp.OutboundIpAddresses,
-                ["ApimIdentity"]        = apiManagement.Identity.Apply(x => x?.PrincipalId),
+                [ApimIdentity]          = apiManagement.Identity.Apply(x => x?.PrincipalId),
                 ["URL"]                 = getFeedUrl,
                 ["ApimTestResult"]      = TestUrl(getFeedUrl, isSecondRun)
             };
         });
 
+        static Output<string> GetFunctionIdentity(WebApp functionApp)
+        {
+            return functionApp.Identity.Apply(async x => x?.PrincipalId ??
+                                                         await Stack.GetStringAsync(nameof(FunctionIdentity)) ??
+                                                         string.Empty);
+        }
+
+        static Output<ImmutableDictionary<string, string>> GetSecretUris(
+            Secret traktIdSecret,
+            Secret traktSecretSecret,
+            Secret tableConnectionStringSecret,
+            Secret tmdbApiKeySecret) =>
+            Output.All(ToKvp(traktIdSecret, TraktIdSecretOutputName),
+                       ToKvp(traktSecretSecret, TraktSecretSecretOutputName),
+                       ToKvp(tableConnectionStringSecret, TableConnectionStringSecretOutputName),
+                       ToKvp(tmdbApiKeySecret, TmdbApiKeySecretOutputName))
+                  .Apply(kvps => new Dictionary<string, string>(kvps).ToImmutableDictionary());
+
+        static void LogRunInstructions(bool isSecondRun)
+        {
+            if (isSecondRun)
+                Log.Info("Second run completed successfully, the stack is now ready");
+            else
+                Log.Warn("Due to circular dependencies, the stack is not ready, a second *pulumi up* is required after");
+        }
+
+        static bool GetIsSecondRun(ImmutableDictionary<string, string>? secretUris) =>
+            secretUris != null &&
+            secretUris.All(kvp => !string.IsNullOrWhiteSpace(kvp.Key));
+
+        static Output<string> GetFeedUrl(
+            ApiManagementService apiManagement,
+            Api api,
+            ApiOperation getFeed,
+            Subscription apimSubscription) =>
+            Output.Format($"{apiManagement.GatewayUrl}/{api.Path}{getFeed.UrlTemplate}?subscription-key={apimSubscription.PrimaryKey}");
+
+        static Output<KeyValuePair<string, string>> ToKvp(Secret secret, string key) =>
+            secret.Properties.Apply(spr => KeyValuePair.Create(key, spr.SecretUriWithVersion));
+
+        static string GetKeyVaultReference(ImmutableDictionary<string, string>? secretUris, string secretName) =>
+            $"@Microsoft.KeyVault(SecretUri={GetSecretUri(secretUris, secretName)})";
+
+        static ImmutableDictionary<string, T> CastValue<T>(this ImmutableDictionary<string, object> dict) =>
+            ImmutableDictionary.CreateRange(dict.Select(kvp => new KeyValuePair<string, T>(kvp.Key, (T) kvp.Value)));
+
+        static Task<string?> GetStringAsync(this StackReference stack, string key) =>
+            stack.GetAsync<string>(key);
+
+        static async Task<T?> GetAsync<T>(this StackReference stack, string key) where T : class =>
+            (T?) await stack.GetValueAsync(key);
+
+        static void CreateSeriesTable(ResourceGroup resourceGroup, StorageAccount mainStorage) =>
+            new Table("storageSeriesTable",
+                      new TableArgs
+                      {
+                          ResourceGroupName = resourceGroup.Name,
+                          AccountName       = mainStorage.Name,
+                          TableName         = "series"
+                      });
+
+        static Subscription ApimSubscription(
+            ResourceGroup resourceGroup,
+            ApiManagementService apiManagement,
+            Api api) =>
+            new Subscription("apimFunctionSubscription",
+                             new SubscriptionArgs
+                             {
+                                 ResourceGroupName = resourceGroup.Name,
+                                 ServiceName       = apiManagement.Name,
+                                 Sid               = "tvshow",
+                                 DisplayName       = "API tvshow subscription",
+                                 Scope             = Output.Format($"/apis/{api.Name}")
+                             });
+
         static Backend FunctionAppApimBackend(
             WebApp functionApp,
             ResourceGroup resourceGroup,
             ApiManagementService apiManagement,
-            NamedValue faKeyNamedValue)
-        {
-            return new Backend("apiManagementFunctionBackend",
-                               new BackendArgs
-                               {
-                                   BackendId         = functionApp.Name,
-                                   ResourceGroupName = resourceGroup.Name,
-                                   ServiceName       = apiManagement.Name,
-                                   Protocol          = BackendProtocol.Http,
-                                   Url               = Output.Format($"https://{functionApp.DefaultHostName}/api"),
-                                   Credentials = new BackendCredentialsContractArgs
-                                   {
-                                       Header =
-                                           faKeyNamedValue.Name.Apply(n =>
-                                                                          new Dictionary<string,
-                                                                              ImmutableArray<string>>
-                                                                          {
-                                                                              ["x-functions-key"] =
-                                                                                  new[] {$"{{{{{n}}}}}"}
-                                                                                     .ToImmutableArray()
-                                                                          })
-                                   }
-                               });
-        }
+            NamedValue faKeyNamedValue) =>
+            new Backend("apiManagementFunctionBackend",
+                        new BackendArgs
+                        {
+                            BackendId         = functionApp.Name,
+                            ResourceGroupName = resourceGroup.Name,
+                            ServiceName       = apiManagement.Name,
+                            Protocol          = BackendProtocol.Http,
+                            Url               = Output.Format($"https://{functionApp.DefaultHostName}/api"),
+                            Credentials = new BackendCredentialsContractArgs
+                            {
+                                Header =
+                                    faKeyNamedValue.Name.Apply(n =>
+                                                                   new Dictionary<string,
+                                                                       ImmutableArray<string>>
+                                                                   {
+                                                                       ["x-functions-key"] =
+                                                                           new[] {$"{{{{{n}}}}}"}
+                                                                              .ToImmutableArray()
+                                                                   })
+                            }
+                        });
 
         static NamedValue FaKeyNamedValue(
             ApiManagementService apiManagement,
             ResourceGroup resourceGroup,
             Secret functionKeySecret,
-            Output<string> apimIdentityClientId)
-        {
-            return new NamedValue("apiManagementNamedValueKeyVaultFunctionKey",
-                                  new NamedValueArgs
-                                  {
-                                      Secret            = true,
-                                      ServiceName       = apiManagement.Name,
-                                      ResourceGroupName = resourceGroup.Name,
-                                      DisplayName       = "FunctionKey",
-                                      NamedValueId      = "function-key",
-                                      KeyVault = new KeyVaultContractCreatePropertiesArgs
-                                      {
-                                          SecretIdentifier =
-                                              functionKeySecret.Properties
-                                                               .Apply(x => x.SecretUriWithVersion),
-                                          IdentityClientId = apimIdentityClientId
-                                      }
-                                  });
-        }
+            Output<string> apimIdentityClientId) =>
+            new NamedValue("apiManagementNamedValueKeyVaultFunctionKey",
+                           new NamedValueArgs
+                           {
+                               Secret            = true,
+                               ServiceName       = apiManagement.Name,
+                               ResourceGroupName = resourceGroup.Name,
+                               DisplayName       = "FunctionKey",
+                               NamedValueId      = "function-key",
+                               KeyVault = new KeyVaultContractCreatePropertiesArgs
+                               {
+                                   SecretIdentifier =
+                                       functionKeySecret.Properties
+                                                        .Apply(x => x.SecretUriWithVersion),
+                                   IdentityClientId = apimIdentityClientId
+                               }
+                           });
 
-        static Output<string> GetMiApplicationId(ApiManagementService apiManagement)
-        {
-            return apiManagement.Identity
-                                .Apply(x => x?.PrincipalId ?? throw new Exception("Missing APIM identity"))
-                                .Apply(x => GetServicePrincipal.InvokeAsync(new GetServicePrincipalArgs
-                                 {
-                                     ObjectId = x
-                                 }))
-                                .Apply(x => x.ApplicationId);
-        }
+        static Output<string> GetMiApplicationId(ApiManagementService apiManagement) =>
+            apiManagement.Identity
+                         .Apply(x => x?.PrincipalId ?? throw new Exception("Missing APIM identity"))
+                         .Apply(x => GetServicePrincipal.InvokeAsync(new GetServicePrincipalArgs
+                          {
+                              ObjectId = x
+                          }))
+                         .Apply(x => x.ApplicationId);
 
-        static void CreateApiOperation(
+        static ApiOperation CreateApiOperation(
             string operationName,
             Api api,
             ResourceGroup resourceGroup,
@@ -419,12 +460,6 @@ namespace TvShowRss
             return BitConverter.ToString(md5.Hash);
         }
 
-        const string SecretsUris = nameof(SecretsUris);
-        const string ApplicationMd5 = nameof(ApplicationMd5);
-        const string FunctionIdentity = nameof(FunctionIdentity);
-        const string GetFeedFunctionName = "GetFeed";
-        const string AddShowFunctionName = "AddShow";
-
         static Output<string> GetAppPackageBlobUrl(
             BlobContainer deploymentsContainer,
             Output<string> appPackageUrl,
@@ -447,7 +482,7 @@ namespace TvShowRss
                              }))
                   .Apply(x => appPackageUrl.Apply(url => url + x.Sas));
 
-        static Blob AppPackage(StorageAccount mainStorage, BlobContainer deploymentsCntainer)
+        static Blob CreateAppPackageBlob(StorageAccount mainStorage, BlobContainer deploymentsCntainer)
         {
             var startInfo =
                 new ProcessStartInfo("dotnet",
@@ -589,7 +624,7 @@ namespace TvShowRss
                           VaultName         = resourcesPrefix + "kv"
                       });
 
-        static BlobContainer BlobContainer(StorageAccount mainStorage, ResourceGroup resourceGroup) =>
+        static BlobContainer CreateDeploymentsBlobContainer(StorageAccount mainStorage, ResourceGroup resourceGroup) =>
             new BlobContainer("deploymentsContainer",
                               new BlobContainerArgs
                               {
@@ -710,7 +745,7 @@ namespace TvShowRss
         // File an issue on pulumi-azure-nextgen on GitHub
         //.Apply(Output.CreateSecret);
 
-        static AppServicePlan AppServicePlan(
+        static AppServicePlan CreateAppServicePlan(
             string location,
             ResourceGroup resourceGroup,
             Config conf,
@@ -754,7 +789,7 @@ namespace TvShowRss
                     defaultName;
         }
 
-        static Component AppInsights(ResourceGroup resourceGroup, string resourcesPrefix) =>
+        static Component CreateAppInsights(ResourceGroup resourceGroup, string resourcesPrefix) =>
             new Component("appInsights",
                           new ComponentArgs
                           {
@@ -766,7 +801,7 @@ namespace TvShowRss
                               RetentionInDays   = 90
                           });
 
-        static StorageAccount MainStorage(string resourcesPrefix, ResourceGroup resourceGroup) =>
+        static StorageAccount CreateStorage(string resourcesPrefix, ResourceGroup resourceGroup) =>
             new StorageAccount("mainStorage",
                                new StorageAccountArgs
                                {
@@ -805,7 +840,7 @@ namespace TvShowRss
                                    }
                                });
 
-        static ResourceGroup ResourceGroup(Config config, string location) =>
+        static ResourceGroup CreateResourceGroup(Config config, string location) =>
             new ResourceGroup("resourceGroup",
                               new ResourceGroupArgs
                               {
