@@ -172,11 +172,14 @@ namespace TvShowRss
 
             return new Dictionary<string, object?>
             {
-                [SecretsUris] = GetSecretUris(traktIdSecret,
-                                              traktSecretSecret,
-                                              tableConnectionStringSecret,
-                                              tmdbApiKeySecret,
-                                              appInsightKeySecret),
+                [SecretsUris] = new Dictionary<string, Output<string>>
+                {
+                    [TraktIdSecretOutputName]               = traktIdSecret.UriWithVersion(),
+                    [TraktSecretSecretOutputName]           = traktSecretSecret.UriWithVersion(),
+                    [TableConnectionStringSecretOutputName] = tableConnectionStringSecret.UriWithVersion(),
+                    [TmdbApiKeySecretOutputName]            = tmdbApiKeySecret.UriWithVersion(),
+                    [AppInsightKeySecretOutputName]         = appInsightKeySecret.UriWithVersion()
+                },
                 [ApplicationMd5]        = Output.Create(appSourceMd5),
                 [FunctionIdentity]      = GetFunctionIdentity(functionApp),
                 [ApimIdentity]          = apiManagement.Identity.Apply(x => x?.PrincipalId),
@@ -201,19 +204,6 @@ namespace TvShowRss
                                                   await Stack.GetStringAsync(nameof(FunctionIdentity)) ??
                                                   string.Empty);
 
-        static Output<ImmutableDictionary<string, string>> GetSecretUris(
-            Secret traktIdSecret,
-            Secret traktSecretSecret,
-            Secret tableConnectionStringSecret,
-            Secret tmdbApiKeySecret,
-            Secret appInsightKeySecret) =>
-            Output.All(ToKvp(traktIdSecret, TraktIdSecretOutputName),
-                       ToKvp(traktSecretSecret, TraktSecretSecretOutputName),
-                       ToKvp(tableConnectionStringSecret, TableConnectionStringSecretOutputName),
-                       ToKvp(tmdbApiKeySecret, TmdbApiKeySecretOutputName),
-                       ToKvp(appInsightKeySecret, AppInsightKeySecretOutputName))
-                  .Apply(kvps => new Dictionary<string, string>(kvps).ToImmutableDictionary());
-
         static void LogRunInstructions(bool isSecondRun)
         {
             if (isSecondRun)
@@ -233,8 +223,8 @@ namespace TvShowRss
             Subscription apimSubscription) =>
             Output.Format($"{apiManagement.GatewayUrl}/{api.Path}{urlTemplate}?subscription-key={apimSubscription.PrimaryKey}");
 
-        static Output<KeyValuePair<string, string>> ToKvp(Secret secret, string key) =>
-            secret.Properties.Apply(spr => KeyValuePair.Create(key, spr.SecretUriWithVersion));
+        static Output<string> UriWithVersion(this Secret secret) =>
+            secret.Properties.Apply(spr => spr.SecretUriWithVersion);
 
         static string GetKeyVaultReference(ImmutableDictionary<string, string>? secretUris, string secretName) =>
             $"@Microsoft.KeyVault(SecretUri={GetSecretUri(secretUris, secretName)})";
@@ -487,8 +477,10 @@ namespace TvShowRss
                   .Apply(tuple =>
                              GetAccountBlobContainerSAS.InvokeAsync(new GetAccountBlobContainerSASArgs
                              {
-                                 Start = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture),
-                                 Expiry = DateTime.UtcNow.AddYears(1)
+                                 Start = DateTime.UtcNow
+                                                 .ToString("O", CultureInfo.InvariantCulture),
+                                 Expiry = DateTime.UtcNow
+                                                  .AddYears(1)
                                                   .ToString("O", CultureInfo.InvariantCulture),
                                  // Find an alternative that works for good, don't want to update the token every year
                                  ContainerName    = tuple.Item1,
