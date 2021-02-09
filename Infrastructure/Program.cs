@@ -41,7 +41,7 @@ using ApiManagementServiceIdentityArgs =
 using GetClientConfig = Pulumi.AzureNextGen.Authorization.Latest.GetClientConfig;
 using GetClientConfigResult = Pulumi.AzureNextGen.Authorization.Latest.GetClientConfigResult;
 
-// TODO:
+// Backlog
 // Add Git commit to the infrastructure tags to trace back to the deployed version
 // Change all "traktClientId" to use a constant and then build + secret etc...
 
@@ -104,8 +104,7 @@ namespace TvShowRss
             var appSourceMd5 = GetAppSourceMd5(AppPath);
 
             var functionApp =
-                FunctionApp(config,
-                            resourcesPrefix,
+                FunctionApp(resourcesPrefix,
                             location,
                             resourceGroup,
                             appServicePlan.Id,
@@ -115,7 +114,6 @@ namespace TvShowRss
                             key => GetKeyVaultReference(secretUris, key));
 
             var appSecrets = KeyVault(resourceGroup,
-                                      config,
                                       azureConfig,
                                       functionApp,
                                       resourcesPrefix,
@@ -177,12 +175,10 @@ namespace TvShowRss
             };
         });
 
-        static Output<string> GetFunctionIdentity(WebApp functionApp)
-        {
-            return functionApp.Identity.Apply(async x => x?.PrincipalId ??
-                                                         await Stack.GetStringAsync(nameof(FunctionIdentity)) ??
-                                                         string.Empty);
-        }
+        static Output<string> GetFunctionIdentity(WebApp functionApp) =>
+            functionApp.Identity.Apply(async x => x?.PrincipalId ??
+                                                  await Stack.GetStringAsync(nameof(FunctionIdentity)) ??
+                                                  string.Empty);
 
         static Output<ImmutableDictionary<string, string>> GetSecretUris(
             Secret traktIdSecret,
@@ -368,7 +364,7 @@ namespace TvShowRss
                         ApiId             = "tvshowsrss",
                         ResourceGroupName = resourceGroup.Name,
                         Path              = "tvshowrss",
-                        Protocols         = new[] {Protocol.Https}
+                        Protocols         = {Protocol.Https}
                     });
 
         static ApiManagementService ApiManagement(
@@ -532,13 +528,15 @@ namespace TvShowRss
                                Value = value
                            },
                            ResourceGroupName = resourceGroup.Name,
-                           SecretName        = $"{char.ToUpper(name[0])}{name.Substring(1)}",
+                           SecretName        = name.ToPascalCase(),
                            VaultName         = appSecrets.Name
                        });
 
+        static string ToPascalCase(this string value) =>
+            $"{char.ToUpper(value[0])}{value.Substring(1)}";
+
         static Vault KeyVault(
             ResourceGroup resourceGroup,
-            Config config,
             GetClientConfigResult azureConfig,
             WebApp functionApp,
             string resourcesPrefix,
@@ -557,8 +555,7 @@ namespace TvShowRss
                                       {
                                           new AccessPolicyEntryArgs
                                           {
-                                              ObjectId = config.GetSecret("keyVaultManagerObjectId") ??
-                                                         Output.Create(azureConfig.ObjectId),
+                                              ObjectId = Output.Create(azureConfig.ObjectId),
                                               Permissions = new PermissionsArgs
                                               {
                                                   Secrets =
@@ -637,7 +634,6 @@ namespace TvShowRss
                               });
 
         static WebApp FunctionApp(
-            Config config,
             string resourcesPrefix,
             string location,
             ResourceGroup resourceGroup,
@@ -649,13 +645,10 @@ namespace TvShowRss
             new WebApp("functionApp",
                        new WebAppArgs
                        {
-                           ClientAffinityEnabled      = false,
-                           ClientCertEnabled          = false,
-                           ClientCertMode             = ClientCertMode.Required,
-                           ContainerSize              = 1536,
-                           CustomDomainVerificationId = config.Require("customDomainVerificationId"),
-                           DailyMemoryTimeQuota       = 0,
-                           Enabled                    = true,
+                           ClientAffinityEnabled = false,
+                           ContainerSize         = 1536,
+                           DailyMemoryTimeQuota  = 0,
+                           Enabled               = true,
                            HostNameSslStates =
                            {
                                new HostNameSslStateArgs
