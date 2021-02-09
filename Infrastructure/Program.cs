@@ -25,7 +25,6 @@ using Pulumi.AzureNextGen.Storage.Latest;
 using Pulumi.AzureNextGen.Storage.Latest.Inputs;
 using Pulumi.AzureNextGen.Web.Latest;
 using Pulumi.AzureNextGen.Web.Latest.Inputs;
-using Action = System.Action;
 using ApiManagementServiceSkuPropertiesArgs =
     Pulumi.AzureNextGen.ApiManagement.Latest.Inputs.ApiManagementServiceSkuPropertiesArgs;
 using BackendCredentialsContractArgs = Pulumi.AzureNextGen.ApiManagement.Latest.Inputs.BackendCredentialsContractArgs;
@@ -58,6 +57,8 @@ namespace TvShowRss
         // secret URIs in the app settings.
 
         // Debug show REST API calls: pulumi up -v=9 --logtostderr --logflow --debug
+
+        // Add Git commit to the infrastructure tags to trace back to the deployed version
 
         [SuppressMessage("ReSharper", "ObjectCreationAsStatement")]
         static Task<int> Main() => Deployment.RunAsync(async () =>
@@ -142,7 +143,7 @@ namespace TvShowRss
 
             var defaultHostKey = GetDefaultHostKey(functionApp);
 
-            var functionKeySecret = Secret(resourceGroup, appSecrets, defaultHostKey, "FunctionKey");
+            var functionKeySecret = Secret(resourceGroup, appSecrets, defaultHostKey, "functionKey");
 
             var apiManagement = ApiManagement(resourcesPrefix, resourceGroup);
 
