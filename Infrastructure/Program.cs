@@ -68,8 +68,8 @@ namespace TvShowRss
         const string ApplicationMd5 = nameof(ApplicationMd5);
         const string FunctionIdentity = nameof(FunctionIdentity);
         const string ApimIdentity = nameof(ApimIdentity);
-        const string GetFeedFunctionName = "GetFeed";
-        const string AddShowFunctionName = "AddShow";
+        const string GetFeedFunctionName = nameof(GetFeed);
+        const string AddShowFunctionName = nameof(AddShow);
 
         static Task<int> Main() => Deployment.RunAsync(async () =>
         {
