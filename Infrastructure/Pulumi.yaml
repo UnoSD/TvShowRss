@@ -1,3 +1,5 @@
 name: TvShowRss
 runtime: dotnet
 description: Azure Function serving an RSS feed with new episode of selected series
+backend:
+  url: file://~/.pulumi/project-stacks/TvShowRss
