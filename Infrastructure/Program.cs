@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
-using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -14,6 +13,7 @@ using Pulumi;
 using Pulumi.AzureAD;
 using Pulumi.AzureNative.ApiManagement;
 using Pulumi.AzureNative.ApiManagement.Inputs;
+using Pulumi.AzureNative.Authorization;
 using Pulumi.AzureNative.Insights;
 using Pulumi.AzureNative.KeyVault;
 using Pulumi.AzureNative.KeyVault.Inputs;
@@ -69,6 +69,8 @@ namespace TvShowRss
         const string GetFeedFunctionName = nameof(GetFeed);
         const string AddShowFunctionName = nameof(AddShow);
 
+        const string StorageBlobDataReaderRoleId = "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1";
+        
         static Task<int> Main() => Deployment.RunAsync(async () =>
         {
             WaitForDebuggerIfRequested();
@@ -104,8 +106,6 @@ namespace TvShowRss
 
             var storageConnectionString = GetStorageConnectionString(resourceGroup, storageAccount);
 
-            var blobUrl = GetAppPackageBlobUrl(deploymentsContainer, appPackage.Url, storageAccount.Name, resourceGroup.Name);
-
             var previousMd5 = await Stack.GetStringAsync(nameof(ApplicationMd5));
 
             var secretUris =
@@ -117,16 +117,32 @@ namespace TvShowRss
                 FunctionApp(Name("fa"),
                             resourceGroup,
                             appServicePlan.Id,
-                            blobUrl,
+                            appPackage.Url,
                             appSourceMd5 == previousMd5,
                             key => GetKeyVaultReference(secretUris, key));
 
+            var savedFunctionAppIdentity =
+                await Stack.GetStringAsync(FunctionIdentity);
+            
+            var functionAppIdentity =
+                functionApp.Identity.Apply(x => x?.PrincipalId ??
+                                                // Workaround for a Pulumi issue that forgets the function identity
+                                                savedFunctionAppIdentity ??
+                                                //throw new Exception("Missing function identity")),
+                                                "Missing function identity, file a bug in Pulumi");
+
+            new RoleAssignment("functionAppBlobReader", new RoleAssignmentArgs
+            {
+                PrincipalId = functionAppIdentity,
+                Scope = storageAccount.Id,
+                RoleDefinitionId = $"/subscriptions/{azureConfig.SubscriptionId}/providers/Microsoft.Authorization/roleDefinitions/{StorageBlobDataReaderRoleId}",
+                PrincipalType = PrincipalType.ServicePrincipal
+            });
+            
             var appSecrets = KeyVault(resourceGroup,
                                       azureConfig,
-                                      functionApp,
+                                      functionAppIdentity,
                                       Name("kv", true),
-                                      // Workaround for a Pulumi issue that forgets the function identity
-                                      await Stack.GetStringAsync(FunctionIdentity),
                                       await Stack.GetStringAsync(ApimIdentity));
 
             var traktIdSecret = SecretFromConfig(resourceGroup, appSecrets, config, TraktClientId.ToCamelCase());
@@ -468,33 +484,6 @@ namespace TvShowRss
             return BitConverter.ToString(md5.Hash);
         }
 
-        static Output<string> GetAppPackageBlobUrl(
-            BlobContainer deploymentsContainer,
-            Output<string> appPackageUrl,
-            Output<string> storageAccountName,
-            Output<string> resourceGroupName) =>
-            Output.Tuple(deploymentsContainer.Name, storageAccountName, resourceGroupName)
-                  .Apply(tuple =>
-                   {
-                       var listStorageAccountServiceSasArgs = new ListStorageAccountServiceSASArgs
-                       {
-                           AccountName           = tuple.Item2,
-                           CanonicalizedResource = $"/blob/{tuple.Item2}/{tuple.Item1}",
-                           ResourceGroupName     = tuple.Item3,
-                           SharedAccessStartTime = DateTime.UtcNow
-                                                           .ToString("O", CultureInfo.InvariantCulture),
-                           SharedAccessExpiryTime = DateTime.UtcNow
-                                                            .AddYears(1)
-                                                            .ToString("O", CultureInfo.InvariantCulture),
-                           // Find an alternative that works for good, don't want to update the token every year
-                           Resource  = SignedResource.C,
-                           Protocols = HttpProtocol.Https,
-                           Permissions = Permissions.R
-                       };
-                       return ListStorageAccountServiceSAS.InvokeAsync(listStorageAccountServiceSasArgs);
-                   })
-                  .Apply(x => appPackageUrl.Apply(url => $"{url}?{x.ServiceSasToken}"));
-
         static Blob CreateAppPackageBlob(StorageAccount mainStorage, BlobContainer deploymentsCntainer, ResourceGroup resourceGroup)
         {
             var startInfo =
@@ -556,9 +545,8 @@ namespace TvShowRss
         static Vault KeyVault(
             ResourceGroup resourceGroup,
             GetClientConfigResult azureConfig,
-            WebApp functionApp,
+            Output<string> functionAppIdentity,
             string name,
-            string? savedIdentity,
             string? apimIdentity) =>
             new Vault(name,
                       new VaultArgs
@@ -588,11 +576,7 @@ namespace TvShowRss
                                           },
                                           new AccessPolicyEntryArgs
                                           {
-                                              ObjectId =
-                                                  functionApp.Identity.Apply(x => x?.PrincipalId ??
-                                                                                  savedIdentity ??
-                                                                                  //throw new Exception("Missing function identity")),
-                                                                                  "Missing function identity, file a bug in Pulumi"),
+                                              ObjectId = functionAppIdentity,
                                               Permissions = new PermissionsArgs
                                               {
                                                   Secrets =
