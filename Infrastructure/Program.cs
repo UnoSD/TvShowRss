@@ -7,12 +7,14 @@ using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using Pulumi;
 using Pulumi.AzureAD;
+using Pulumi.AzureAD.Inputs;
 using Pulumi.AzureNative.ApiManagement;
-using Pulumi.AzureNative.ApiManagement.Inputs;
 using Pulumi.AzureNative.Authorization;
 using Pulumi.AzureNative.Insights;
 using Pulumi.AzureNative.KeyVault;
@@ -25,15 +27,12 @@ using Pulumi.AzureNative.Web.Inputs;
 using Pulumi.Random;
 using ApiManagementServiceSkuPropertiesArgs =
     Pulumi.AzureNative.ApiManagement.Inputs.ApiManagementServiceSkuPropertiesArgs;
-using BackendCredentialsContractArgs = Pulumi.AzureNative.ApiManagement.Inputs.BackendCredentialsContractArgs;
 using Config = Pulumi.Config;
 using Deployment = Pulumi.Deployment;
 using ManagedServiceIdentityType = Pulumi.AzureNative.Web.ManagedServiceIdentityType;
 using SkuName = Pulumi.AzureNative.KeyVault.SkuName;
 using Table = Pulumi.AzureNative.Storage.Table;
 using TableArgs = Pulumi.AzureNative.Storage.TableArgs;
-using NamedValue = Pulumi.AzureNative.ApiManagement.NamedValue;
-using NamedValueArgs = Pulumi.AzureNative.ApiManagement.NamedValueArgs;
 using ApiManagementServiceIdentityArgs =
     Pulumi.AzureNative.ApiManagement.Inputs.ApiManagementServiceIdentityArgs;
 using GetClientConfig = Pulumi.AzureNative.Authorization.GetClientConfig;
@@ -66,17 +65,22 @@ namespace TvShowRss
         const string ApplicationMd5 = nameof(ApplicationMd5);
         const string FunctionIdentity = nameof(FunctionIdentity);
         const string ApimIdentity = nameof(ApimIdentity);
+        const string AadFunctionClientId = nameof(AadFunctionClientId);
         const string GetFeedFunctionName = nameof(GetFeed);
         const string AddShowFunctionName = nameof(AddShow);
 
         const string StorageBlobDataReaderRoleId = "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1";
         
+        const string MicrosoftGraphResourceAppId = "00000003-0000-0000-c000-000000000000";
+        const string MicrosoftGraphUserReadId = "e1fe6dd8-ba31-4d61-89e7-88639da4683d";
+
         static Task<int> Main() => Deployment.RunAsync(async () =>
         {
             WaitForDebuggerIfRequested();
 
             var config = new Config();
-            var resourcesPrefix = config.Require("resourcesPrefix");
+            var workloadApplication = config.Require("workloadApplication");
+            var environment = config.Require("environment");
             var azureConfig = await GetClientConfig.InvokeAsync();
 
             var locationName =
@@ -87,8 +91,8 @@ namespace TvShowRss
 
             string Name(string type, bool noDashes = false) => 
                 noDashes ?
-                $"{type}{resourcesPrefix}{locationName}{1:000}" :
-                $"{type}-{resourcesPrefix}-{locationName}-{1:000}" ; 
+                    $"{type}{workloadApplication}{environment}{locationName}{1:000}" :
+                    $"{type}-{workloadApplication}-{environment}-{locationName}-{1:000}" ; 
             
             var resourceGroup = CreateResourceGroup(Name("rg"));
 
@@ -121,6 +125,123 @@ namespace TvShowRss
                             appSourceMd5 == previousMd5,
                             key => GetKeyVaultReference(secretUris, key));
 
+            var applicationClientId =
+                await Stack.GetStringAsync(nameof(AadFunctionClientId));
+
+            var aadFunctionApp = new Application("functionApp", new ApplicationArgs
+            {
+                Api = new ApplicationApiArgs
+                {
+                    Oauth2PermissionScopes = 
+                    {
+                        new ApplicationApiOauth2PermissionScopeArgs
+                        {
+                            AdminConsentDescription = Output.Format($"Allow the application to access {functionApp.Name} on behalf of the signed-in user."),
+                            AdminConsentDisplayName = Output.Format($"Access {functionApp.Name}"),
+                            Enabled = true,
+                            Id = new RandomUuid("permissionScope").Result,
+                            Type = "User",
+                            UserConsentDescription = Output.Format($"Allow the application to access {functionApp.Name} on your behalf."),
+                            UserConsentDisplayName = Output.Format($"Access {functionApp.Name}"),
+                            Value = "user_impersonation"
+                        }
+                    }
+                },
+                DisplayName = functionApp.Name,
+                IdentifierUris = applicationClientId is null ? new InputList<string>() : new List<Input<string>>
+                {
+                    Output.Format($"api://{applicationClientId}")
+                },
+                Owners = 
+                {
+                    azureConfig.ObjectId
+                },
+                PreventDuplicateNames = false,
+                RequiredResourceAccesses = 
+                {
+                    new ApplicationRequiredResourceAccessArgs
+                    {
+                        ResourceAccesses = 
+                        {
+                            new ApplicationRequiredResourceAccessResourceAccessArgs
+                            {
+                                Id = MicrosoftGraphUserReadId,
+                                Type = "Scope"
+                            }
+                        },
+                        ResourceAppId = MicrosoftGraphResourceAppId
+                    }
+                },
+                SignInAudience = "AzureADMyOrg",
+                Web = new ApplicationWebArgs
+                {
+                    HomepageUrl = Output.Format($"https://{functionApp.DefaultHostName}"),
+                    ImplicitGrant = new ApplicationWebImplicitGrantArgs
+                    {
+                        IdTokenIssuanceEnabled = true
+                    },
+                    RedirectUris = 
+                    {
+                        Output.Format($"https://{functionApp.DefaultHostName}/.auth/login/aad/callback")
+                    }
+                }
+            });
+            
+            // Will need to use this to force the patch invocation below
+            var applicationIdAfterUpdate =
+                Output.Tuple(aadFunctionApp.ObjectId, aadFunctionApp.ApplicationId).Apply(async tuple =>
+                {
+                    // accessTokenAcceptedVersion set to 2 (upload app manifest?)
+                    // https://docs.microsoft.com/en-us/graph/api/resources/apiapplication?view=graph-rest-beta //requestedAccessTokenVersion 
+                    var content = JsonContent.Create(new
+                    {
+                        api = new
+                        {
+                            requestedAccessTokenVersion = 2
+                        }
+                    });
+
+                    var result = await GetClientToken.InvokeAsync(new GetClientTokenArgs
+                    {
+                        Endpoint = "https://graph.microsoft.com"
+                    });
+
+                    var httpClient = new HttpClient
+                    {
+                        DefaultRequestHeaders =
+                        {
+                            Authorization = AuthenticationHeaderValue.Parse($"Bearer {result.Token}")
+                        },
+                        BaseAddress = new Uri("https://graph.microsoft.com")
+                    };
+                    
+                    content.Headers.ContentType = MediaTypeHeaderValue.Parse("application/json");
+
+                    var callResult = await httpClient.PatchAsync($"/v1.0/applications/{tuple.Item1}", content);
+
+                    callResult.EnsureSuccessStatusCode();
+                    
+                    return tuple.Item2;
+                });
+            
+            new WebAppAuthSettings("functionAuth", new WebAppAuthSettingsArgs
+            {
+                Name = functionApp.Name,
+                ResourceGroupName = resourceGroup.Name,
+                AllowedAudiences = 
+                {
+                    Output.Format($"api://{applicationIdAfterUpdate}")
+                },
+                ClientId                    = applicationIdAfterUpdate,
+                ClientSecretSettingName     = "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET",
+                ConfigVersion               = "v2",
+                Enabled                     = true,
+                IsAuthFromFile              = "False",
+                Issuer                      = Output.Format($"https://sts.windows.net/{azureConfig.TenantId}/v2.0"), // Maybe remove v2.0 if we can't set aad app above to issue the 2.0
+                TokenStoreEnabled           = true,
+                UnauthenticatedClientAction = UnauthenticatedClientAction.RedirectToLoginPage
+            });
+            
             var savedFunctionAppIdentity =
                 await Stack.GetStringAsync(FunctionIdentity);
             
@@ -158,22 +279,13 @@ namespace TvShowRss
             var appInsightKeySecret =
                 Secret(resourceGroup, appSecrets, appInsights.InstrumentationKey, AppInsightKey.ToCamelCase());
 
-            var defaultHostKey = GetDefaultHostKey(functionApp);
-
-            var functionKeySecret = Secret(resourceGroup, appSecrets, defaultHostKey, "functionKey");
-
             var apiManagement = ApiManagement(Name("apim"), resourceGroup);
 
-            var apimIdentityClientId = GetMiApplicationId(apiManagement);
-
-            var faKeyNamedValue =
-                FaKeyNamedValue(apiManagement, resourceGroup, functionKeySecret, apimIdentityClientId);
-
-            var backend = FunctionAppApimBackend(functionApp, resourceGroup, apiManagement, faKeyNamedValue);
+            var backend = FunctionAppApimBackend(functionApp, resourceGroup, apiManagement);
 
             var api = ApimApi(apiManagement, resourceGroup);
 
-            AllOperationsPolicy(api, apiManagement, resourceGroup, backend);
+            AllOperationsPolicy(api, apiManagement, resourceGroup, backend, aadFunctionApp);
 
             var getFeed = CreateApiOperation(GetFeedFunctionName, api, resourceGroup, apiManagement, HttpMethod.Get);
 
@@ -200,11 +312,11 @@ namespace TvShowRss
                 [ApplicationMd5]        = Output.Create(appSourceMd5),
                 [FunctionIdentity]      = GetFunctionIdentity(functionApp),
                 [ApimIdentity]          = apiManagement.Identity.Apply(x => x?.PrincipalId),
-                ["FunctionTestResult"]  = TestFunctionInvocation(functionApp, defaultHostKey, isSecondRun),
                 ["ApimTestResult"]      = TestUrl(getFeedUrl, isSecondRun),
                 ["FunctionOutboundIPs"] = functionApp.OutboundIpAddresses,
                 ["GetFeedURL"]          = getFeedUrl,
-                ["AddShowURL"]          = GetAddShowUrl(apiManagement, api, addShow, apimSubscription)
+                ["AddShowURL"]          = GetAddShowUrl(apiManagement, api, addShow, apimSubscription),
+                [AadFunctionClientId]   = aadFunctionApp.ApplicationId
             };
         });
 
@@ -281,8 +393,7 @@ namespace TvShowRss
         static Backend FunctionAppApimBackend(
             WebApp functionApp,
             ResourceGroup resourceGroup,
-            ApiManagementService apiManagement,
-            NamedValue faKeyNamedValue) =>
+            ApiManagementService apiManagement) =>
             new("apiManagementFunctionBackend",
                 new BackendArgs
                 {
@@ -290,51 +401,8 @@ namespace TvShowRss
                     ResourceGroupName = resourceGroup.Name,
                     ServiceName       = apiManagement.Name,
                     Protocol          = BackendProtocol.Http,
-                    Url               = Output.Format($"https://{functionApp.DefaultHostName}/api"),
-                    Credentials = new BackendCredentialsContractArgs
-                    {
-                        Header =
-                            faKeyNamedValue.Name.Apply(n =>
-                                                           new Dictionary<string,
-                                                               ImmutableArray<string>>
-                                                           {
-                                                               ["x-functions-key"] =
-                                                                   new[] {$"{{{{{n}}}}}"}
-                                                                      .ToImmutableArray()
-                                                           })
-                    }
+                    Url               = Output.Format($"https://{functionApp.DefaultHostName}/api")
                 });
-
-        static NamedValue FaKeyNamedValue(
-            ApiManagementService apiManagement,
-            ResourceGroup resourceGroup,
-            Secret functionKeySecret,
-            Output<string> apimIdentityClientId) =>
-            new("apiManagementNamedValueKeyVaultFunctionKey",
-                new NamedValueArgs
-                {
-                    Secret            = true,
-                    ServiceName       = apiManagement.Name,
-                    ResourceGroupName = resourceGroup.Name,
-                    DisplayName       = "FunctionKey",
-                    NamedValueId      = "function-key",
-                    KeyVault = new KeyVaultContractCreatePropertiesArgs
-                    {
-                        SecretIdentifier =
-                            functionKeySecret.Properties
-                                             .Apply(x => x.SecretUriWithVersion),
-                        IdentityClientId = apimIdentityClientId
-                    }
-                });
-
-        static Output<string> GetMiApplicationId(ApiManagementService apiManagement) =>
-            apiManagement.Identity
-                         .Apply(x => x?.PrincipalId ?? throw new Exception("Missing APIM identity"))
-                         .Apply(x => GetServicePrincipal.InvokeAsync(new GetServicePrincipalArgs
-                          {
-                              ObjectId = x
-                          }))
-                         .Apply(x => x.ApplicationId);
 
         static ApiOperation CreateApiOperation(
             string operationName,
@@ -357,7 +425,7 @@ namespace TvShowRss
         static string ToCamelCase(this string value) =>
             $"{char.ToLower(value[0])}{value.Substring(1)}";
 
-        static void AllOperationsPolicy(Api api, ApiManagementService apim, ResourceGroup resourceGroup, Backend be) =>
+        static void AllOperationsPolicy(Api api, ApiManagementService apim, ResourceGroup resourceGroup, Backend be, Application aadFunctionApp) =>
             new ApiPolicy("apiPolicy",
                           new ApiPolicyArgs
                           {
@@ -369,6 +437,7 @@ namespace TvShowRss
 <policies>
     <inbound>
         <rate-limit calls=""8"" renewal-period=""300"" />
+        <authentication-managed-identity resource=""api://{aadFunctionApp.ApplicationId}"" />
         <set-backend-service id=""apim-generated-policy"" backend-id=""{be.Name}"" />
         <base />
     </inbound>
@@ -417,11 +486,6 @@ namespace TvShowRss
                     }
                 });
 
-        static Output<string> TestFunctionInvocation(WebApp functionApp, Output<string> key, bool isSecondRun) =>
-            TestUrl(Output
-                       .Format($"https://{functionApp.DefaultHostName}/api/{GetFeedFunctionName}?code={key}"),
-                    isSecondRun);
-
         static Output<string> TestUrl(Output<string> url, bool isSecondRun) =>
             isSecondRun ?
                 url.Apply(x => new HttpClient().GetAsync(x))
@@ -429,15 +493,6 @@ namespace TvShowRss
                               "Successful" :
                               $"Failed with: {response.StatusCode} {await response.Content.ReadAsStringAsync()}") :
                 Output.Create("Run the deployment again to set app settings to correct Key Vault references");
-
-        static Output<string> GetDefaultHostKey(WebApp functionApp) =>
-            Output.Tuple(functionApp.Name, functionApp.ResourceGroup)
-                  .Apply(tuple => ListWebAppHostKeys.InvokeAsync(new ListWebAppHostKeysArgs
-                   {
-                       Name              = tuple.Item1,
-                       ResourceGroupName = tuple.Item2
-                   }))
-                  .Apply(r => r.MasterKey!);
 
         /// <summary>
         /// Enable with: pulumi &lt;up/preview&gt; -c waitForDebugger=true; sed -i 's/^  debug:waitForDebugger: "true"$//' Pulumi.&lt;stackname&gt;.yaml
@@ -625,7 +680,7 @@ namespace TvShowRss
             new RandomId(name, new RandomIdArgs
             {
                 ByteLength = 8
-            }).Id.Apply(x => $"{name}{x.ToLower()[..length]}");
+            }).Hex.Apply(x => $"{name}{x.ToLower()[..length]}");
 
         static BlobContainer CreateDeploymentsBlobContainer(StorageAccount mainStorage, ResourceGroup resourceGroup) =>
             new("deploymentsContainer",

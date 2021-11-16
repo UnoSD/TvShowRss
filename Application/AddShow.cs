@@ -13,7 +13,7 @@ namespace TvShowRss
         [FunctionName(nameof(AddShow))]
         public static Task<IActionResult> Run
         (
-            [HttpTrigger(AuthorizationLevel.Function, "post")]
+            [HttpTrigger(AuthorizationLevel.Anonymous, "post")]
             HttpRequest req,
             ILogger log
         ) => Adder.AddSeriesToCheckAsync(Config.GetValue(TableConnectionString), req.Query["id"], log)

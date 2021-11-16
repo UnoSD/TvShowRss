@@ -8,8 +8,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Pulumi.AzureAD" Version="3.3.0" />
-    <PackageReference Include="Pulumi.AzureNative" Version="1.45.0" />
+    <PackageReference Include="Pulumi.AzureAD" Version="5.6.0" />
+    <PackageReference Include="Pulumi.AzureNative" Version="1.46.0" />
     <PackageReference Include="Pulumi.Random" Version="4.3.1" />
   </ItemGroup>
 

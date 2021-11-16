@@ -15,7 +15,7 @@ namespace TvShowRss
         [FunctionName(nameof(GetFeed))]
         public static Task<IActionResult> Run
         (
-            [HttpTrigger(AuthorizationLevel.Function, "get")]
+            [HttpTrigger(AuthorizationLevel.Anonymous, "get")]
             HttpRequest req
         ) => Finder.FindLatestEpisodeByDateAsync(FromDate, Config.GetValue(TableConnectionString), Config.GetValue(TmdbApiKey))
                    .Map(episodes => episodes.ToRssFeed())
