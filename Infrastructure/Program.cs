@@ -11,35 +11,34 @@ using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using Pulumi;
-using Pulumi.Azure.AppService;
-using Pulumi.Azure.Storage;
-using Pulumi.Azure.Storage.Inputs;
 using Pulumi.AzureAD;
-using Pulumi.AzureNextGen.ApiManagement.Latest;
-using Pulumi.AzureNextGen.ApiManagement.V20200601Preview.Inputs;
-using Pulumi.AzureNextGen.Insights.Latest;
-using Pulumi.AzureNextGen.KeyVault.Latest;
-using Pulumi.AzureNextGen.KeyVault.Latest.Inputs;
-using Pulumi.AzureNextGen.Resources.Latest;
-using Pulumi.AzureNextGen.Storage.Latest;
-using Pulumi.AzureNextGen.Storage.Latest.Inputs;
-using Pulumi.AzureNextGen.Web.Latest;
-using Pulumi.AzureNextGen.Web.Latest.Inputs;
+using Pulumi.AzureNative.ApiManagement;
+using Pulumi.AzureNative.ApiManagement.Inputs;
+using Pulumi.AzureNative.Insights;
+using Pulumi.AzureNative.KeyVault;
+using Pulumi.AzureNative.KeyVault.Inputs;
+using Pulumi.AzureNative.Resources;
+using Pulumi.AzureNative.Storage;
+using Pulumi.AzureNative.Storage.Inputs;
+using Pulumi.AzureNative.Web;
+using Pulumi.AzureNative.Web.Inputs;
+using Pulumi.Random;
 using ApiManagementServiceSkuPropertiesArgs =
-    Pulumi.AzureNextGen.ApiManagement.Latest.Inputs.ApiManagementServiceSkuPropertiesArgs;
-using BackendCredentialsContractArgs = Pulumi.AzureNextGen.ApiManagement.Latest.Inputs.BackendCredentialsContractArgs;
+    Pulumi.AzureNative.ApiManagement.Inputs.ApiManagementServiceSkuPropertiesArgs;
+using BackendCredentialsContractArgs = Pulumi.AzureNative.ApiManagement.Inputs.BackendCredentialsContractArgs;
 using Config = Pulumi.Config;
 using Deployment = Pulumi.Deployment;
-using ManagedServiceIdentityType = Pulumi.AzureNextGen.Web.Latest.ManagedServiceIdentityType;
-using SkuName = Pulumi.AzureNextGen.KeyVault.Latest.SkuName;
-using Table = Pulumi.AzureNextGen.Storage.Latest.Table;
-using TableArgs = Pulumi.AzureNextGen.Storage.Latest.TableArgs;
-using NamedValue = Pulumi.AzureNextGen.ApiManagement.V20200601Preview.NamedValue;
-using NamedValueArgs = Pulumi.AzureNextGen.ApiManagement.V20200601Preview.NamedValueArgs;
+using ManagedServiceIdentityType = Pulumi.AzureNative.Web.ManagedServiceIdentityType;
+using SkuName = Pulumi.AzureNative.KeyVault.SkuName;
+using Table = Pulumi.AzureNative.Storage.Table;
+using TableArgs = Pulumi.AzureNative.Storage.TableArgs;
+using NamedValue = Pulumi.AzureNative.ApiManagement.NamedValue;
+using NamedValueArgs = Pulumi.AzureNative.ApiManagement.NamedValueArgs;
 using ApiManagementServiceIdentityArgs =
-    Pulumi.AzureNextGen.ApiManagement.Latest.Inputs.ApiManagementServiceIdentityArgs;
-using GetClientConfig = Pulumi.AzureNextGen.Authorization.Latest.GetClientConfig;
-using GetClientConfigResult = Pulumi.AzureNextGen.Authorization.Latest.GetClientConfigResult;
+    Pulumi.AzureNative.ApiManagement.Inputs.ApiManagementServiceIdentityArgs;
+using GetClientConfig = Pulumi.AzureNative.Authorization.GetClientConfig;
+using GetClientConfigResult = Pulumi.AzureNative.Authorization.GetClientConfigResult;
+using SecretArgs = Pulumi.AzureNative.KeyVault.SecretArgs;
 
 // Backlog
 // Add Git commit to the infrastructure tags to trace back to the deployed version
@@ -76,26 +75,36 @@ namespace TvShowRss
 
             var config = new Config();
             var resourcesPrefix = config.Require("resourcesPrefix");
-            var location = config.Require("location");
             var azureConfig = await GetClientConfig.InvokeAsync();
 
-            var resourceGroup = CreateResourceGroup(config, location);
+            var locationName =
+                new Config("azure-native").Require("location")
+                                          .ToLowerInvariant()
+                                          .Replace(" ", "")
+                                          .Replace("europe", "eu");
 
-            var storageAccount = CreateStorage(resourcesPrefix, resourceGroup);
+            string Name(string type, bool noDashes = false) => 
+                noDashes ?
+                $"{type}{resourcesPrefix}{locationName}{1:000}" :
+                $"{type}-{resourcesPrefix}-{locationName}-{1:000}" ; 
+            
+            var resourceGroup = CreateResourceGroup(Name("rg"));
+
+            var storageAccount = CreateStorage(Name("sa", true), resourceGroup);
 
             CreateSeriesTable(resourceGroup, storageAccount);
 
-            var appInsights = CreateAppInsights(resourceGroup, resourcesPrefix);
+            var appInsights = CreateAppInsights(resourceGroup, Name("ai"));
 
             var deploymentsContainer = CreateDeploymentsBlobContainer(storageAccount, resourceGroup);
 
-            var appPackage = CreateAppPackageBlob(storageAccount, deploymentsContainer);
+            var appPackage = CreateAppPackageBlob(storageAccount, deploymentsContainer, resourceGroup);
 
-            var appServicePlan = CreateAppServicePlan(location, resourceGroup, config, resourcesPrefix);
+            var appServicePlan = CreateAppServicePlan(resourceGroup, Name("asp"));
 
             var storageConnectionString = GetStorageConnectionString(resourceGroup, storageAccount);
 
-            var blobUrl = GetAppPackageBlobUrl(deploymentsContainer, appPackage.Url, storageConnectionString);
+            var blobUrl = GetAppPackageBlobUrl(deploymentsContainer, appPackage.Url, storageAccount.Name, resourceGroup.Name);
 
             var previousMd5 = await Stack.GetStringAsync(nameof(ApplicationMd5));
 
@@ -105,8 +114,7 @@ namespace TvShowRss
             var appSourceMd5 = GetAppSourceMd5(AppPath);
 
             var functionApp =
-                FunctionApp(resourcesPrefix,
-                            location,
+                FunctionApp(Name("fa"),
                             resourceGroup,
                             appServicePlan.Id,
                             blobUrl,
@@ -116,7 +124,7 @@ namespace TvShowRss
             var appSecrets = KeyVault(resourceGroup,
                                       azureConfig,
                                       functionApp,
-                                      resourcesPrefix,
+                                      Name("kv", true),
                                       // Workaround for a Pulumi issue that forgets the function identity
                                       await Stack.GetStringAsync(FunctionIdentity),
                                       await Stack.GetStringAsync(ApimIdentity));
@@ -138,7 +146,7 @@ namespace TvShowRss
 
             var functionKeySecret = Secret(resourceGroup, appSecrets, defaultHostKey, "functionKey");
 
-            var apiManagement = ApiManagement(resourcesPrefix, resourceGroup);
+            var apiManagement = ApiManagement(Name("apim"), resourceGroup);
 
             var apimIdentityClientId = GetMiApplicationId(apiManagement);
 
@@ -374,14 +382,12 @@ namespace TvShowRss
                     });
 
         static ApiManagementService ApiManagement(
-            string resourcesPrefix,
+            string name,
             ResourceGroup resourceGroup) =>
-            new ApiManagementService("apiManagement",
+            new ApiManagementService(name,
                                      new ApiManagementServiceArgs
                                      {
                                          ResourceGroupName = resourceGroup.Name,
-                                         Location          = resourceGroup.Location,
-                                         ServiceName       = resourcesPrefix + "apim",
                                          PublisherEmail    = "unosd@apimanagement.unosd",
                                          PublisherName     = "UnoSD",
                                          Identity = new ApiManagementServiceIdentityArgs
@@ -410,12 +416,12 @@ namespace TvShowRss
 
         static Output<string> GetDefaultHostKey(WebApp functionApp) =>
             Output.Tuple(functionApp.Name, functionApp.ResourceGroup)
-                  .Apply(tuple => GetFunctionAppHostKeys.InvokeAsync(new GetFunctionAppHostKeysArgs
+                  .Apply(tuple => ListWebAppHostKeys.InvokeAsync(new ListWebAppHostKeysArgs
                    {
                        Name              = tuple.Item1,
                        ResourceGroupName = tuple.Item2
                    }))
-                  .Apply(r => r.DefaultFunctionKey);
+                  .Apply(r => r.MasterKey!);
 
         /// <summary>
         /// Enable with: pulumi &lt;up/preview&gt; -c waitForDebugger=true; sed -i 's/^  debug:waitForDebugger: "true"$//' Pulumi.&lt;stackname&gt;.yaml
@@ -465,28 +471,31 @@ namespace TvShowRss
         static Output<string> GetAppPackageBlobUrl(
             BlobContainer deploymentsContainer,
             Output<string> appPackageUrl,
-            Output<string> storageConnectionString) =>
-            Output.Tuple(deploymentsContainer.Name, storageConnectionString)
+            Output<string> storageAccountName,
+            Output<string> resourceGroupName) =>
+            Output.Tuple(deploymentsContainer.Name, storageAccountName, resourceGroupName)
                   .Apply(tuple =>
-                             GetAccountBlobContainerSAS.InvokeAsync(new GetAccountBlobContainerSASArgs
-                             {
-                                 Start = DateTime.UtcNow
-                                                 .ToString("O", CultureInfo.InvariantCulture),
-                                 Expiry = DateTime.UtcNow
-                                                  .AddYears(1)
-                                                  .ToString("O", CultureInfo.InvariantCulture),
-                                 // Find an alternative that works for good, don't want to update the token every year
-                                 ContainerName    = tuple.Item1,
-                                 HttpsOnly        = true,
-                                 ConnectionString = tuple.Item2,
-                                 Permissions = new GetAccountBlobContainerSASPermissionsArgs
-                                 {
-                                     Read = true
-                                 }
-                             }))
-                  .Apply(x => appPackageUrl.Apply(url => url + x.Sas));
+                   {
+                       var listStorageAccountServiceSasArgs = new ListStorageAccountServiceSASArgs
+                       {
+                           AccountName           = tuple.Item2,
+                           CanonicalizedResource = $"/blob/{tuple.Item2}/{tuple.Item1}",
+                           ResourceGroupName     = tuple.Item3,
+                           SharedAccessStartTime = DateTime.UtcNow
+                                                           .ToString("O", CultureInfo.InvariantCulture),
+                           SharedAccessExpiryTime = DateTime.UtcNow
+                                                            .AddYears(1)
+                                                            .ToString("O", CultureInfo.InvariantCulture),
+                           // Find an alternative that works for good, don't want to update the token every year
+                           Resource  = SignedResource.C,
+                           Protocols = HttpProtocol.Https,
+                           Permissions = Permissions.R
+                       };
+                       return ListStorageAccountServiceSAS.InvokeAsync(listStorageAccountServiceSasArgs);
+                   })
+                  .Apply(x => appPackageUrl.Apply(url => $"{url}?{x.ServiceSasToken}"));
 
-        static Blob CreateAppPackageBlob(StorageAccount mainStorage, BlobContainer deploymentsCntainer)
+        static Blob CreateAppPackageBlob(StorageAccount mainStorage, BlobContainer deploymentsCntainer, ResourceGroup resourceGroup)
         {
             var startInfo =
                 new ProcessStartInfo("dotnet",
@@ -507,12 +516,13 @@ namespace TvShowRss
             return new Blob("appPackage",
                             new BlobArgs
                             {
-                                AccessTier           = "Hot",
-                                Source               = new FileArchive(AppPath),
-                                StorageAccountName   = mainStorage.Name,
-                                StorageContainerName = deploymentsCntainer.Name,
-                                Type                 = "Block",
-                                Name                 = "application.zip"
+                                AccessTier        = BlobAccessTier.Hot,
+                                Source            = new FileArchive(AppPath),
+                                AccountName       = mainStorage.Name,
+                                ContainerName     = deploymentsCntainer.Name,
+                                Type              = BlobType.Block,
+                                BlobName          = "application.zip",
+                                ResourceGroupName = resourceGroup.Name
                             });
         }
 
@@ -547,13 +557,13 @@ namespace TvShowRss
             ResourceGroup resourceGroup,
             GetClientConfigResult azureConfig,
             WebApp functionApp,
-            string resourcesPrefix,
+            string name,
             string? savedIdentity,
             string? apimIdentity) =>
-            new Vault("appSecrets",
+            new Vault(name,
                       new VaultArgs
                       {
-                          Location = resourceGroup.Location,
+                          VaultName = GetPseudoRandomStringFor(name),
                           Properties = new VaultPropertiesArgs
                           {
                               EnableRbacAuthorization = false,
@@ -617,17 +627,21 @@ namespace TvShowRss
                               EnabledForDiskEncryption     = false,
                               EnabledForTemplateDeployment = false,
                               ProvisioningState            = "Succeeded",
-                              Sku = new Pulumi.AzureNextGen.KeyVault.Latest.Inputs.SkuArgs
+                              Sku = new Pulumi.AzureNative.KeyVault.Inputs.SkuArgs
                               {
                                   Family = "A",
                                   Name   = SkuName.Standard
                               },
                               TenantId = azureConfig.TenantId,
-                              VaultUri = $"https://{resourcesPrefix + "kv"}.vault.azure.net/"
                           },
-                          ResourceGroupName = resourceGroup.Name,
-                          VaultName         = resourcesPrefix + "kv"
+                          ResourceGroupName = resourceGroup.Name
                       });
+
+        static Output<string> GetPseudoRandomStringFor(string name, int length = 4) =>
+            new RandomId(name, new RandomIdArgs
+            {
+                ByteLength = 8
+            }).Id.Apply(x => $"{name}{x.ToLower()[..length]}");
 
         static BlobContainer CreateDeploymentsBlobContainer(StorageAccount mainStorage, ResourceGroup resourceGroup) =>
             new BlobContainer("deploymentsContainer",
@@ -642,14 +656,13 @@ namespace TvShowRss
                               });
 
         static WebApp FunctionApp(
-            string resourcesPrefix,
-            string location,
+            string name,
             ResourceGroup resourceGroup,
             Output<string> appServicePlanId,
             Output<string> appPackageBlobUrl,
             bool md5Unchanged,
             Func<string, string> getKeyVaultReference) =>
-            new WebApp("functionApp",
+            new WebApp(name,
                        new WebAppArgs
                        {
                            ClientAffinityEnabled = false,
@@ -659,8 +672,6 @@ namespace TvShowRss
                                Type = ManagedServiceIdentityType.SystemAssigned
                            },
                            Kind              = "functionapp,linux",
-                           Location          = location,
-                           Name              = resourcesPrefix + "fa",
                            RedundancyMode    = RedundancyMode.None,
                            Reserved          = true,
                            ResourceGroupName = resourceGroup.Name,
@@ -690,7 +701,7 @@ namespace TvShowRss
             new Dictionary<string, Input<string>>
             {
                 // WEBSITE_RUN_FROM_PACKAGE must stay on top to be ignored if MD5 unchanged
-                ["WEBSITE_RUN_FROM_PACKAGE"] = appPackageBlobUrl,
+                ["WEBSITE_RUN_FROM_PACKAGE"]       = appPackageBlobUrl,
 
                 ["FUNCTIONS_WORKER_RUNTIME"]       = "dotnet",
                 ["FUNCTION_APP_EDIT_MODE"]         = "readwrite",
@@ -723,22 +734,16 @@ namespace TvShowRss
         //.Apply(Output.CreateSecret);
 
         static AppServicePlan CreateAppServicePlan(
-            string location,
             ResourceGroup resourceGroup,
-            Config conf,
-            string resourcePrefix) =>
-            new AppServicePlan("appServicePlan",
+            string name) =>
+            new AppServicePlan(name,
                                new AppServicePlanArgs
                                {
                                    HyperV                    = false,
                                    IsSpot                    = false,
                                    IsXenon                   = false,
                                    Kind                      = "functionapp",
-                                   Location                  = location,
                                    MaximumElasticWorkerCount = 1,
-                                   Name = GetResourceName(conf,
-                                                          resourcePrefix + "asp",
-                                                          "appServicePlan"),
                                    PerSiteScaling    = false,
                                    Reserved          = true,
                                    ResourceGroupName = resourceGroup.Name,
@@ -754,37 +759,23 @@ namespace TvShowRss
                                    TargetWorkerSizeId = 0
                                });
 
-        static string GetResourceName(Config config, string defaultName, string pulumiName)
-        {
-            var nameOverrides =
-                config.GetObject<ImmutableDictionary<string, string>>("nameOverride");
-
-            return nameOverrides is null ?
-                defaultName :
-                nameOverrides.TryGetValue(pulumiName, out var value) ?
-                    value :
-                    defaultName;
-        }
-
-        static Component CreateAppInsights(ResourceGroup resourceGroup, string resourcesPrefix) =>
-            new Component("appInsights",
+        static Component CreateAppInsights(ResourceGroup resourceGroup, string name) =>
+            new Component(name,
                           new ComponentArgs
                           {
                               ApplicationType   = "web",
                               Kind              = "web",
-                              Location          = resourceGroup.Location,
                               ResourceGroupName = resourceGroup.Name,
-                              ResourceName      = resourcesPrefix + "ai",
                               RetentionInDays   = 90
                           });
 
-        static StorageAccount CreateStorage(string resourcesPrefix, ResourceGroup resourceGroup) =>
-            new StorageAccount("storageAccount",
+        static StorageAccount CreateStorage(string name, ResourceGroup resourceGroup) =>
+            new StorageAccount(name,
                                new StorageAccountArgs
                                {
                                    AccessTier             = AccessTier.Hot,
-                                   AccountName            = resourcesPrefix + "sa",
                                    EnableHttpsTrafficOnly = false,
+                                   AccountName = GetPseudoRandomStringFor(name),
                                    Encryption = new EncryptionArgs
                                    {
                                        KeySource = "Microsoft.Storage",
@@ -804,25 +795,19 @@ namespace TvShowRss
                                    },
                                    IsHnsEnabled = false,
                                    Kind         = "StorageV2",
-                                   Location     = resourceGroup.Location,
-                                   NetworkRuleSet = new Pulumi.AzureNextGen.Storage.Latest.Inputs.NetworkRuleSetArgs
+                                   NetworkRuleSet = new Pulumi.AzureNative.Storage.Inputs.NetworkRuleSetArgs
                                    {
                                        Bypass        = "AzureServices",
                                        DefaultAction = DefaultAction.Allow
                                    },
                                    ResourceGroupName = resourceGroup.Name,
-                                   Sku = new Pulumi.AzureNextGen.Storage.Latest.Inputs.SkuArgs
+                                   Sku = new Pulumi.AzureNative.Storage.Inputs.SkuArgs
                                    {
                                        Name = "Standard_LRS"
                                    }
                                });
 
-        static ResourceGroup CreateResourceGroup(Config config, string location) =>
-            new ResourceGroup("resourceGroup",
-                              new ResourceGroupArgs
-                              {
-                                  ResourceGroupName = config.Require("resourceGroup"),
-                                  Location          = location.ToLower().Replace(" ", "")
-                              });
+        static ResourceGroup CreateResourceGroup(string name) =>
+            new ResourceGroup(name, new ResourceGroupArgs());
     }
 }
