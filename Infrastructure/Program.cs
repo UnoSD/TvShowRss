@@ -58,7 +58,7 @@ namespace TvShowRss
         const string AppPath = "../Application/bin/publish";
 
         static readonly Lazy<StackReference> LazyStack =
-            new Lazy<StackReference>(() => new StackReference(Deployment.Instance.StackName));
+            new(() => new StackReference(Deployment.Instance.StackName));
 
         static StackReference Stack => LazyStack.Value;
 
@@ -268,64 +268,64 @@ namespace TvShowRss
             ResourceGroup resourceGroup,
             ApiManagementService apiManagement,
             Api api) =>
-            new Subscription("apimFunctionSubscription",
-                             new SubscriptionArgs
-                             {
-                                 ResourceGroupName = resourceGroup.Name,
-                                 ServiceName       = apiManagement.Name,
-                                 Sid               = "tvshow",
-                                 DisplayName       = "API tvshow subscription",
-                                 Scope             = Output.Format($"/apis/{api.Name}")
-                             });
+            new("apimFunctionSubscription",
+                new SubscriptionArgs
+                {
+                    ResourceGroupName = resourceGroup.Name,
+                    ServiceName       = apiManagement.Name,
+                    Sid               = "tvshow",
+                    DisplayName       = "API tvshow subscription",
+                    Scope             = Output.Format($"/apis/{api.Name}")
+                });
 
         static Backend FunctionAppApimBackend(
             WebApp functionApp,
             ResourceGroup resourceGroup,
             ApiManagementService apiManagement,
             NamedValue faKeyNamedValue) =>
-            new Backend("apiManagementFunctionBackend",
-                        new BackendArgs
-                        {
-                            BackendId         = functionApp.Name,
-                            ResourceGroupName = resourceGroup.Name,
-                            ServiceName       = apiManagement.Name,
-                            Protocol          = BackendProtocol.Http,
-                            Url               = Output.Format($"https://{functionApp.DefaultHostName}/api"),
-                            Credentials = new BackendCredentialsContractArgs
-                            {
-                                Header =
-                                    faKeyNamedValue.Name.Apply(n =>
-                                                                   new Dictionary<string,
-                                                                       ImmutableArray<string>>
-                                                                   {
-                                                                       ["x-functions-key"] =
-                                                                           new[] {$"{{{{{n}}}}}"}
-                                                                              .ToImmutableArray()
-                                                                   })
-                            }
-                        });
+            new("apiManagementFunctionBackend",
+                new BackendArgs
+                {
+                    BackendId         = functionApp.Name,
+                    ResourceGroupName = resourceGroup.Name,
+                    ServiceName       = apiManagement.Name,
+                    Protocol          = BackendProtocol.Http,
+                    Url               = Output.Format($"https://{functionApp.DefaultHostName}/api"),
+                    Credentials = new BackendCredentialsContractArgs
+                    {
+                        Header =
+                            faKeyNamedValue.Name.Apply(n =>
+                                                           new Dictionary<string,
+                                                               ImmutableArray<string>>
+                                                           {
+                                                               ["x-functions-key"] =
+                                                                   new[] {$"{{{{{n}}}}}"}
+                                                                      .ToImmutableArray()
+                                                           })
+                    }
+                });
 
         static NamedValue FaKeyNamedValue(
             ApiManagementService apiManagement,
             ResourceGroup resourceGroup,
             Secret functionKeySecret,
             Output<string> apimIdentityClientId) =>
-            new NamedValue("apiManagementNamedValueKeyVaultFunctionKey",
-                           new NamedValueArgs
-                           {
-                               Secret            = true,
-                               ServiceName       = apiManagement.Name,
-                               ResourceGroupName = resourceGroup.Name,
-                               DisplayName       = "FunctionKey",
-                               NamedValueId      = "function-key",
-                               KeyVault = new KeyVaultContractCreatePropertiesArgs
-                               {
-                                   SecretIdentifier =
-                                       functionKeySecret.Properties
-                                                        .Apply(x => x.SecretUriWithVersion),
-                                   IdentityClientId = apimIdentityClientId
-                               }
-                           });
+            new("apiManagementNamedValueKeyVaultFunctionKey",
+                new NamedValueArgs
+                {
+                    Secret            = true,
+                    ServiceName       = apiManagement.Name,
+                    ResourceGroupName = resourceGroup.Name,
+                    DisplayName       = "FunctionKey",
+                    NamedValueId      = "function-key",
+                    KeyVault = new KeyVaultContractCreatePropertiesArgs
+                    {
+                        SecretIdentifier =
+                            functionKeySecret.Properties
+                                             .Apply(x => x.SecretUriWithVersion),
+                        IdentityClientId = apimIdentityClientId
+                    }
+                });
 
         static Output<string> GetMiApplicationId(ApiManagementService apiManagement) =>
             apiManagement.Identity
@@ -342,17 +342,17 @@ namespace TvShowRss
             ResourceGroup resourceGroup,
             ApiManagementService apim,
             HttpMethod httpMethod) =>
-            new ApiOperation(ToCamelCase(operationName) + "Operation",
-                             new ApiOperationArgs
-                             {
-                                 ApiId             = api.Name,
-                                 OperationId       = operationName,
-                                 ResourceGroupName = resourceGroup.Name,
-                                 ServiceName       = apim.Name,
-                                 DisplayName       = operationName,
-                                 Method            = httpMethod.Method,
-                                 UrlTemplate       = "/" + operationName
-                             });
+            new(ToCamelCase(operationName) + "Operation",
+                new ApiOperationArgs
+                {
+                    ApiId             = api.Name,
+                    OperationId       = operationName,
+                    ResourceGroupName = resourceGroup.Name,
+                    ServiceName       = apim.Name,
+                    DisplayName       = operationName,
+                    Method            = httpMethod.Method,
+                    UrlTemplate       = "/" + operationName
+                });
 
         static string ToCamelCase(this string value) =>
             $"{char.ToLower(value[0])}{value.Substring(1)}";
@@ -386,36 +386,36 @@ namespace TvShowRss
                           });
 
         static Api ApimApi(ApiManagementService apiManagement, ResourceGroup resourceGroup) =>
-            new Api("api",
-                    new ApiArgs
-                    {
-                        ServiceName       = apiManagement.Name,
-                        DisplayName       = "tvshowrss",
-                        ApiId             = "tvshowsrss",
-                        ResourceGroupName = resourceGroup.Name,
-                        Path              = "tvshowrss",
-                        Protocols         = {Protocol.Https}
-                    });
+            new("api",
+                new ApiArgs
+                {
+                    ServiceName       = apiManagement.Name,
+                    DisplayName       = "tvshowrss",
+                    ApiId             = "tvshowsrss",
+                    ResourceGroupName = resourceGroup.Name,
+                    Path              = "tvshowrss",
+                    Protocols         = {Protocol.Https}
+                });
 
         static ApiManagementService ApiManagement(
             string name,
             ResourceGroup resourceGroup) =>
-            new ApiManagementService(name,
-                                     new ApiManagementServiceArgs
-                                     {
-                                         ResourceGroupName = resourceGroup.Name,
-                                         PublisherEmail    = "unosd@apimanagement.unosd",
-                                         PublisherName     = "UnoSD",
-                                         Identity = new ApiManagementServiceIdentityArgs
-                                         {
-                                             Type = ApimIdentityType.SystemAssigned
-                                         },
-                                         Sku = new ApiManagementServiceSkuPropertiesArgs
-                                         {
-                                             Name     = SkuType.Consumption,
-                                             Capacity = 0
-                                         }
-                                     });
+            new(name,
+                new ApiManagementServiceArgs
+                {
+                    ResourceGroupName = resourceGroup.Name,
+                    PublisherEmail    = "unosd@apimanagement.unosd",
+                    PublisherName     = "UnoSD",
+                    Identity = new ApiManagementServiceIdentityArgs
+                    {
+                        Type = ApimIdentityType.SystemAssigned
+                    },
+                    Sku = new ApiManagementServiceSkuPropertiesArgs
+                    {
+                        Name     = SkuType.Consumption,
+                        Capacity = 0
+                    }
+                });
 
         static Output<string> TestFunctionInvocation(WebApp functionApp, Output<string> key, bool isSecondRun) =>
             TestUrl(Output
@@ -464,7 +464,7 @@ namespace TvShowRss
                 var content = File.ReadAllBytes(file);
 
                 yield return isLast ?
-                    (Action<ICryptoTransform>) (ct => ct.TransformFinalBlock(content, 0, content.Length)) :
+                    ct => ct.TransformFinalBlock(content, 0, content.Length) :
                     ct => ct.TransformBlock(content, 0, content.Length, content, 0);
             }
 
@@ -481,7 +481,7 @@ namespace TvShowRss
             foreach (var action in actions)
                 action(md5);
 
-            return BitConverter.ToString(md5.Hash);
+            return BitConverter.ToString(md5.Hash!);
         }
 
         static Blob CreateAppPackageBlob(StorageAccount mainStorage, BlobContainer deploymentsCntainer, ResourceGroup resourceGroup)
@@ -523,21 +523,21 @@ namespace TvShowRss
             Secret(resourceGroup, appSecrets, config.RequireSecret(configKey), configKey);
 
         static Secret Secret(ResourceGroup resourceGroup, Vault appSecrets, Output<string> value, string name) =>
-            new Secret(name + "Secret",
-                       new SecretArgs
-                       {
-                           Properties = new SecretPropertiesArgs
-                           {
-                               Attributes = new SecretAttributesArgs
-                               {
-                                   Enabled = true
-                               },
-                               Value = value
-                           },
-                           ResourceGroupName = resourceGroup.Name,
-                           SecretName        = name.ToPascalCase(),
-                           VaultName         = appSecrets.Name
-                       });
+            new(name + "Secret",
+                new SecretArgs
+                {
+                    Properties = new SecretPropertiesArgs
+                    {
+                        Attributes = new SecretAttributesArgs
+                        {
+                            Enabled = true
+                        },
+                        Value = value
+                    },
+                    ResourceGroupName = resourceGroup.Name,
+                    SecretName        = name.ToPascalCase(),
+                    VaultName         = appSecrets.Name
+                });
 
         static string ToPascalCase(this string value) =>
             $"{char.ToUpper(value[0])}{value.Substring(1)}";
@@ -548,78 +548,78 @@ namespace TvShowRss
             Output<string> functionAppIdentity,
             string name,
             string? apimIdentity) =>
-            new Vault(name,
-                      new VaultArgs
-                      {
-                          VaultName = GetPseudoRandomStringFor(name),
-                          Properties = new VaultPropertiesArgs
-                          {
-                              EnableRbacAuthorization = false,
-                              EnableSoftDelete        = false,
-                              AccessPolicies =
-                                  new[]
-                                      {
-                                          new AccessPolicyEntryArgs
-                                          {
-                                              ObjectId = Output.Create(azureConfig.ObjectId),
-                                              Permissions = new PermissionsArgs
-                                              {
-                                                  Secrets =
-                                                  {
-                                                      "get",
-                                                      "set",
-                                                      "list",
-                                                      "delete"
-                                                  }
-                                              },
-                                              TenantId = azureConfig.TenantId
-                                          },
-                                          new AccessPolicyEntryArgs
-                                          {
-                                              ObjectId = functionAppIdentity,
-                                              Permissions = new PermissionsArgs
-                                              {
-                                                  Secrets =
-                                                  {
-                                                      "get",
-                                                      "set",
-                                                      "list"
-                                                  }
-                                              },
-                                              TenantId = azureConfig.TenantId
-                                          }
-                                      }.Concat(apimIdentity is null ?
-                                                   Array.Empty<AccessPolicyEntryArgs>() :
-                                                   new[]
-                                                   {
-                                                       new AccessPolicyEntryArgs
-                                                       {
-                                                           ObjectId = apimIdentity,
-                                                           Permissions = new PermissionsArgs
-                                                           {
-                                                               Secrets =
-                                                               {
-                                                                   "get",
-                                                                   "list"
-                                                               }
-                                                           },
-                                                           TenantId = azureConfig.TenantId
-                                                       }
-                                                   })
-                                       .ToList(),
-                              EnabledForDeployment         = false,
-                              EnabledForDiskEncryption     = false,
-                              EnabledForTemplateDeployment = false,
-                              ProvisioningState            = "Succeeded",
-                              Sku = new Pulumi.AzureNative.KeyVault.Inputs.SkuArgs
-                              {
-                                  Family = "A",
-                                  Name   = SkuName.Standard
-                              },
-                              TenantId = azureConfig.TenantId,
-                          },
-                          ResourceGroupName = resourceGroup.Name
-                      });
+            new(name,
+                new VaultArgs
+                {
+                    VaultName = GetPseudoRandomStringFor(name),
+                    Properties = new VaultPropertiesArgs
+                    {
+                        EnableRbacAuthorization = false,
+                        EnableSoftDelete        = false,
+                        AccessPolicies =
+                            new[]
+                                {
+                                    new AccessPolicyEntryArgs
+                                    {
+                                        ObjectId = Output.Create(azureConfig.ObjectId),
+                                        Permissions = new PermissionsArgs
+                                        {
+                                            Secrets =
+                                            {
+                                                "get",
+                                                "set",
+                                                "list",
+                                                "delete"
+                                            }
+                                        },
+                                        TenantId = azureConfig.TenantId
+                                    },
+                                    new AccessPolicyEntryArgs
+                                    {
+                                        ObjectId = functionAppIdentity,
+                                        Permissions = new PermissionsArgs
+                                        {
+                                            Secrets =
+                                            {
+                                                "get",
+                                                "set",
+                                                "list"
+                                            }
+                                        },
+                                        TenantId = azureConfig.TenantId
+                                    }
+                                }.Concat(apimIdentity is null ?
+                                             Array.Empty<AccessPolicyEntryArgs>() :
+                                             new[]
+                                             {
+                                                 new AccessPolicyEntryArgs
+                                                 {
+                                                     ObjectId = apimIdentity,
+                                                     Permissions = new PermissionsArgs
+                                                     {
+                                                         Secrets =
+                                                         {
+                                                             "get",
+                                                             "list"
+                                                         }
+                                                     },
+                                                     TenantId = azureConfig.TenantId
+                                                 }
+                                             })
+                                 .ToList(),
+                        EnabledForDeployment         = false,
+                        EnabledForDiskEncryption     = false,
+                        EnabledForTemplateDeployment = false,
+                        ProvisioningState            = "Succeeded",
+                        Sku = new Pulumi.AzureNative.KeyVault.Inputs.SkuArgs
+                        {
+                            Family = "A",
+                            Name   = SkuName.Standard
+                        },
+                        TenantId = azureConfig.TenantId,
+                    },
+                    ResourceGroupName = resourceGroup.Name
+                });
 
         static Output<string> GetPseudoRandomStringFor(string name, int length = 4) =>
             new RandomId(name, new RandomIdArgs
@@ -628,16 +628,16 @@ namespace TvShowRss
             }).Id.Apply(x => $"{name}{x.ToLower()[..length]}");
 
         static BlobContainer CreateDeploymentsBlobContainer(StorageAccount mainStorage, ResourceGroup resourceGroup) =>
-            new BlobContainer("deploymentsContainer",
-                              new BlobContainerArgs
-                              {
-                                  AccountName                 = mainStorage.Name,
-                                  ContainerName               = "deployments",
-                                  DefaultEncryptionScope      = "$account-encryption-key",
-                                  DenyEncryptionScopeOverride = false,
-                                  PublicAccess                = PublicAccess.None,
-                                  ResourceGroupName           = resourceGroup.Name
-                              });
+            new("deploymentsContainer",
+                new BlobContainerArgs
+                {
+                    AccountName                 = mainStorage.Name,
+                    ContainerName               = "deployments",
+                    DefaultEncryptionScope      = "$account-encryption-key",
+                    DenyEncryptionScopeOverride = false,
+                    PublicAccess                = PublicAccess.None,
+                    ResourceGroupName           = resourceGroup.Name
+                });
 
         static WebApp FunctionApp(
             string name,
@@ -646,43 +646,43 @@ namespace TvShowRss
             Output<string> appPackageBlobUrl,
             bool md5Unchanged,
             Func<string, string> getKeyVaultReference) =>
-            new WebApp(name,
-                       new WebAppArgs
-                       {
-                           ClientAffinityEnabled = false,
-                           HttpsOnly             = true,
-                           Identity = new ManagedServiceIdentityArgs
-                           {
-                               Type = ManagedServiceIdentityType.SystemAssigned
-                           },
-                           Kind              = "functionapp,linux",
-                           RedundancyMode    = RedundancyMode.None,
-                           Reserved          = true,
-                           ResourceGroupName = resourceGroup.Name,
-                           ServerFarmId      = appServicePlanId.Apply(x => x.Replace("serverFarms", "serverfarms")),
-                           SiteConfig = new SiteConfigArgs
-                           {
-                               LinuxFxVersion = "dotnet|3.1",
-                               AppSettings = AppSettings(appPackageBlobUrl, getKeyVaultReference)
-                                            .Select(kvp => new NameValuePairArgs {Name = kvp.Key, Value = kvp.Value})
-                                            .ToList()
-                           }
-                       },
-                       new CustomResourceOptions
-                       {
-                           IgnoreChanges = md5Unchanged ?
-                               new List<string>
-                               {
-                                   // This is why WEBSITE_RUN_FROM_PACKAGE must stay at first position
-                                   "siteConfig.appSettings[0].value"
-                               } :
-                               new List<string>()
-                       });
+            new(name,
+                new WebAppArgs
+                {
+                    ClientAffinityEnabled = false,
+                    HttpsOnly             = true,
+                    Identity = new ManagedServiceIdentityArgs
+                    {
+                        Type = ManagedServiceIdentityType.SystemAssigned
+                    },
+                    Kind              = "functionapp,linux",
+                    RedundancyMode    = RedundancyMode.None,
+                    Reserved          = true,
+                    ResourceGroupName = resourceGroup.Name,
+                    ServerFarmId      = appServicePlanId.Apply(x => x.Replace("serverFarms", "serverfarms")),
+                    SiteConfig = new SiteConfigArgs
+                    {
+                        LinuxFxVersion = "dotnet|3.1",
+                        AppSettings = AppSettings(appPackageBlobUrl, getKeyVaultReference)
+                                     .Select(kvp => new NameValuePairArgs {Name = kvp.Key, Value = kvp.Value})
+                                     .ToList()
+                    }
+                },
+                new CustomResourceOptions
+                {
+                    IgnoreChanges = md5Unchanged ?
+                        new List<string>
+                        {
+                            // This is why WEBSITE_RUN_FROM_PACKAGE must stay at first position
+                            "siteConfig.appSettings[0].value"
+                        } :
+                        new List<string>()
+                });
 
         static Dictionary<string, Input<string>> AppSettings(
             Output<string> appPackageBlobUrl,
             Func<string, string> getKeyVaultReference) =>
-            new Dictionary<string, Input<string>>
+            new()
             {
                 // WEBSITE_RUN_FROM_PACKAGE must stay on top to be ignored if MD5 unchanged
                 ["WEBSITE_RUN_FROM_PACKAGE"]       = appPackageBlobUrl,
@@ -720,78 +720,78 @@ namespace TvShowRss
         static AppServicePlan CreateAppServicePlan(
             ResourceGroup resourceGroup,
             string name) =>
-            new AppServicePlan(name,
-                               new AppServicePlanArgs
-                               {
-                                   HyperV                    = false,
-                                   IsSpot                    = false,
-                                   IsXenon                   = false,
-                                   Kind                      = "functionapp",
-                                   MaximumElasticWorkerCount = 1,
-                                   PerSiteScaling    = false,
-                                   Reserved          = true,
-                                   ResourceGroupName = resourceGroup.Name,
-                                   Sku = new SkuDescriptionArgs
-                                   {
-                                       Capacity = 0,
-                                       Family   = "Y",
-                                       Name     = "Y1",
-                                       Size     = "Y1",
-                                       Tier     = "Dynamic"
-                                   },
-                                   TargetWorkerCount  = 0,
-                                   TargetWorkerSizeId = 0
-                               });
+            new(name,
+                new AppServicePlanArgs
+                {
+                    HyperV                    = false,
+                    IsSpot                    = false,
+                    IsXenon                   = false,
+                    Kind                      = "functionapp",
+                    MaximumElasticWorkerCount = 1,
+                    PerSiteScaling    = false,
+                    Reserved          = true,
+                    ResourceGroupName = resourceGroup.Name,
+                    Sku = new SkuDescriptionArgs
+                    {
+                        Capacity = 0,
+                        Family   = "Y",
+                        Name     = "Y1",
+                        Size     = "Y1",
+                        Tier     = "Dynamic"
+                    },
+                    TargetWorkerCount  = 0,
+                    TargetWorkerSizeId = 0
+                });
 
         static Component CreateAppInsights(ResourceGroup resourceGroup, string name) =>
-            new Component(name,
-                          new ComponentArgs
-                          {
-                              ApplicationType   = "web",
-                              Kind              = "web",
-                              ResourceGroupName = resourceGroup.Name,
-                              RetentionInDays   = 90
-                          });
+            new(name,
+                new ComponentArgs
+                {
+                    ApplicationType   = "web",
+                    Kind              = "web",
+                    ResourceGroupName = resourceGroup.Name,
+                    RetentionInDays   = 90
+                });
 
         static StorageAccount CreateStorage(string name, ResourceGroup resourceGroup) =>
-            new StorageAccount(name,
-                               new StorageAccountArgs
-                               {
-                                   AccessTier             = AccessTier.Hot,
-                                   EnableHttpsTrafficOnly = false,
-                                   AccountName = GetPseudoRandomStringFor(name),
-                                   Encryption = new EncryptionArgs
-                                   {
-                                       KeySource = "Microsoft.Storage",
-                                       Services = new EncryptionServicesArgs
-                                       {
-                                           Blob = new EncryptionServiceArgs
-                                           {
-                                               Enabled = true,
-                                               KeyType = "Account"
-                                           },
-                                           File = new EncryptionServiceArgs
-                                           {
-                                               Enabled = true,
-                                               KeyType = "Account"
-                                           }
-                                       }
-                                   },
-                                   IsHnsEnabled = false,
-                                   Kind         = "StorageV2",
-                                   NetworkRuleSet = new Pulumi.AzureNative.Storage.Inputs.NetworkRuleSetArgs
-                                   {
-                                       Bypass        = "AzureServices",
-                                       DefaultAction = DefaultAction.Allow
-                                   },
-                                   ResourceGroupName = resourceGroup.Name,
-                                   Sku = new Pulumi.AzureNative.Storage.Inputs.SkuArgs
-                                   {
-                                       Name = "Standard_LRS"
-                                   }
-                               });
+            new(name,
+                new StorageAccountArgs
+                {
+                    AccessTier             = AccessTier.Hot,
+                    EnableHttpsTrafficOnly = false,
+                    AccountName = GetPseudoRandomStringFor(name),
+                    Encryption = new EncryptionArgs
+                    {
+                        KeySource = "Microsoft.Storage",
+                        Services = new EncryptionServicesArgs
+                        {
+                            Blob = new EncryptionServiceArgs
+                            {
+                                Enabled = true,
+                                KeyType = "Account"
+                            },
+                            File = new EncryptionServiceArgs
+                            {
+                                Enabled = true,
+                                KeyType = "Account"
+                            }
+                        }
+                    },
+                    IsHnsEnabled = false,
+                    Kind         = "StorageV2",
+                    NetworkRuleSet = new Pulumi.AzureNative.Storage.Inputs.NetworkRuleSetArgs
+                    {
+                        Bypass        = "AzureServices",
+                        DefaultAction = DefaultAction.Allow
+                    },
+                    ResourceGroupName = resourceGroup.Name,
+                    Sku = new Pulumi.AzureNative.Storage.Inputs.SkuArgs
+                    {
+                        Name = "Standard_LRS"
+                    }
+                });
 
         static ResourceGroup CreateResourceGroup(string name) =>
-            new ResourceGroup(name, new ResourceGroupArgs());
+            new(name, new ResourceGroupArgs());
     }
 }
