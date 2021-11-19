@@ -191,8 +191,9 @@ namespace TvShowRss
             var applicationIdAfterUpdate =
                 Output.Tuple(aadFunctionApp.ObjectId, aadFunctionApp.ApplicationId).Apply(async tuple =>
                 {
-                    // accessTokenAcceptedVersion set to 2 (upload app manifest?)
-                    // https://docs.microsoft.com/en-us/graph/api/resources/apiapplication?view=graph-rest-beta //requestedAccessTokenVersion 
+                    // Not supported on Pulumi to set accessTokenAcceptedVersion to 2, so invoking the API
+                    // https://docs.microsoft.com/en-us/graph/api/resources/apiapplication?view=graph-rest-beta
+                    // requestedAccessTokenVersion 
                     var content = JsonContent.Create(new
                     {
                         api = new
@@ -237,7 +238,7 @@ namespace TvShowRss
                 ConfigVersion               = "v2",
                 Enabled                     = true,
                 IsAuthFromFile              = "False",
-                Issuer                      = Output.Format($"https://sts.windows.net/{azureConfig.TenantId}/v2.0"), // Maybe remove v2.0 if we can't set aad app above to issue the 2.0
+                Issuer                      = Output.Format($"https://sts.windows.net/{azureConfig.TenantId}/v2.0"),
                 TokenStoreEnabled           = true,
                 UnauthenticatedClientAction = UnauthenticatedClientAction.RedirectToLoginPage
             });
